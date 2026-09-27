@@ -1,0 +1,107 @@
+.playlist-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 24px;
+  padding: 24px 26px 22px;
+  flex-shrink: 0;
+}
+
+.playlist-head-art {
+  flex-shrink: 0;
+}
+
+.playlist-swatch {
+  display: grid;
+  place-items: center;
+  width: 152px;
+  height: 152px;
+  border-radius: var(--r-lg);
+  color: rgba(255, 255, 255, 0.9);
+  background: linear-gradient(150deg, var(--accent), color-mix(in oklab, var(--accent) 45%, #000));
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+}
+
+.playlist-swatch.fav {
+  background: linear-gradient(150deg, #ec4899, #7c3aed);
+}
+
+.playlist-head-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.playlist-kind {
+  font-size: 10.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.playlist-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 42px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.032em;
+  color: var(--fg-0);
+}
+
+.playlist-stats {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.playlist-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.play-big {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: var(--r-full);
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 10px 28px color-mix(in oklab, var(--accent) 40%, transparent);
+  transition:
+    transform var(--fast) var(--ease),
+    opacity var(--fast) var(--ease);
+}
+
+.play-big:hover:not(:disabled) {
+  transform: scale(1.06);
+}
+
+.play-big:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.playlist-head-actions .pill {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line-1);
+}
+
+.playlist-head-actions .pill:hover:not(:disabled) {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.playlist-head-actions .pill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

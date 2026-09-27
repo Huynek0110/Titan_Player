@@ -1,0 +1,181 @@
+.sidebar {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  border-right: 1px solid var(--line-1);
+  background: linear-gradient(180deg, rgba(16, 16, 24, 0.62), rgba(10, 10, 16, 0.5));
+  backdrop-filter: blur(30px) saturate(1.5);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+}
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px 4px;
+}
+
+.nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nav-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  font-size: 13.5px;
+  font-weight: 520;
+  color: var(--fg-1);
+  text-align: left;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--fg-0);
+}
+
+.nav-item.active {
+  /* A filled pill reads as "selected" without needing a heavy border. */
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg-0);
+  font-weight: 600;
+}
+
+.nav-item.active svg {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.nav-count {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-3);
+  padding-left: 6px;
+}
+
+.nav-delete {
+  position: absolute;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  opacity: 0;
+  color: var(--fg-2);
+}
+
+.nav-row:hover .nav-delete {
+  opacity: 1;
+}
+
+.nav-row:hover .nav-count {
+  opacity: 0;
+}
+
+.nav-delete:hover {
+  color: #ff6b6b;
+}
+
+/* --- playlists section ------------------------------------------------- */
+
+.sidebar-section {
+  margin-top: 22px;
+}
+
+.sidebar-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 6px 10px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.sidebar-add {
+  width: 24px;
+  height: 24px;
+}
+
+.sidebar-empty {
+  margin: 4px 10px;
+  font-size: 12.5px;
+  color: var(--fg-3);
+}
+
+.playlist-input {
+  width: calc(100% - 8px);
+  margin: 2px 4px 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--fg-0);
+  background: var(--bg-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  outline: none;
+}
+
+.playlist-input::placeholder {
+  color: var(--fg-3);
+}
+
+/* --- footer ------------------------------------------------------------ */
+
+.sidebar-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line-1);
+  min-height: 46px;
+}
+
+.sidebar-rescan {
+  width: 28px;
+  height: 28px;
+}
+
+.sidebar-stat {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.spin {
+  animation: sidebar-spin 900ms linear infinite;
+}
+
+@keyframes sidebar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

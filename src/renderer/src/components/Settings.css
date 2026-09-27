@@ -1,0 +1,265 @@
+.settings {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 34px 48px;
+  max-width: 760px;
+}
+
+.settings-head h1 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.settings-head p {
+  margin: 0 0 28px;
+  font-size: 13.5px;
+  color: var(--fg-2);
+}
+
+.settings-card {
+  margin-bottom: 20px;
+  padding: 20px 22px;
+  border-radius: var(--r-lg);
+  background: rgba(255, 255, 255, 0.032);
+  border: 1px solid var(--line-1);
+}
+
+.settings-card h2 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 640;
+  color: var(--fg-0);
+}
+
+.settings-note {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+
+.settings-note code,
+.ext-add code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* --- toggle row -------------------------------------------------------- */
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line-1);
+  border-bottom: 1px solid var(--line-1);
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+
+.settings-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-row strong {
+  font-size: 13.5px;
+  font-weight: 580;
+  color: var(--fg-0);
+}
+
+.settings-row em {
+  font-size: 11.5px;
+  font-style: normal;
+  color: var(--fg-3);
+}
+
+.toggle {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.13);
+  transition: background var(--mid) var(--ease);
+}
+
+.toggle.on {
+  background: var(--accent);
+}
+
+.toggle i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-full);
+  background: #fff;
+  transition: transform var(--mid) var(--ease);
+}
+
+.toggle.on i {
+  transform: translateX(18px);
+}
+
+/* --- folder list ------------------------------------------------------- */
+
+.folder-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.folder-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  color: var(--fg-1);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.folder-list li svg {
+  flex-shrink: 0;
+  color: var(--fg-3);
+}
+
+.folder-list li span {
+  flex: 1;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+}
+
+.folder-empty {
+  color: var(--fg-3);
+  font-style: italic;
+}
+
+/* --- stats ------------------------------------------------------------- */
+
+.settings-stats {
+  display: flex;
+  gap: 30px;
+  margin-bottom: 16px;
+}
+
+.settings-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 780;
+  letter-spacing: -0.02em;
+  color: var(--fg-0);
+}
+
+.stat-value.warn {
+  color: #ffb84d;
+}
+
+.stat-label {
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+/* --- extensions -------------------------------------------------------- */
+
+.settings-more {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-1);
+}
+
+.settings-more summary {
+  font-size: 12.5px;
+  font-weight: 580;
+  color: var(--fg-1);
+  cursor: pointer;
+}
+
+.settings-more summary:hover {
+  color: var(--fg-0);
+}
+
+.ext-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ext-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: var(--r-full);
+  font-size: 12px;
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.055);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+
+.ext-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ext-item input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.ext-add {
+  display: flex;
+  gap: 6px;
+  margin-left: 4px;
+}
+
+.ext-add input {
+  width: 82px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--fg-0);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-full);
+  outline: none;
+}
+
+.ext-add input:focus {
+  border-color: var(--accent);
+}
+
+.settings .pill {
+  padding: 7px 15px;
+  font-size: 12.5px;
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.settings .pill:hover {
+  background: rgba(255, 255, 255, 0.16);
+}

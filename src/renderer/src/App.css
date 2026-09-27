@@ -1,0 +1,207 @@
+.app {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-shell {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.app-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- library header ---------------------------------------------------- */
+
+.library-head {
+  flex-shrink: 0;
+  padding: 6px 24px 12px;
+}
+
+.library-head-top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.library-title h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -0.028em;
+  color: var(--fg-0);
+}
+
+.library-sub {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.library-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 216px;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid transparent;
+  color: var(--fg-3);
+  transition:
+    border-color var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    width var(--mid) var(--ease);
+}
+
+.search.focus {
+  width: 268px;
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--fg-1);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg-0);
+  background: none;
+  border: none;
+  outline: none;
+}
+
+.search input::placeholder {
+  color: var(--fg-3);
+}
+
+.search button {
+  display: grid;
+  place-items: center;
+  color: var(--fg-3);
+}
+
+.search button:hover {
+  color: var(--fg-0);
+}
+
+.library-tools .pill {
+  padding: 7px 14px;
+  font-size: 12.5px;
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line-1);
+  white-space: nowrap;
+}
+
+.library-tools .pill:hover:not(:disabled) {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.library-tools .pill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.play-big.sm {
+  width: 34px;
+  height: 34px;
+}
+
+.library-eq {
+  margin-top: 10px;
+  height: 34px;
+  opacity: 0.75;
+}
+
+.visualiser {
+  display: block;
+  width: 100%;
+}
+
+/* --- boot and fatal --------------------------------------------------- */
+
+.boot {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  background: var(--bg-0);
+  color: var(--fg-3);
+  font-size: 13px;
+}
+
+.fatal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  width: min(460px, 80vw);
+  padding: 22px 24px;
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-3);
+}
+
+.fatal strong {
+  font-size: 15px;
+  color: #ff9d9d;
+}
+
+.fatal p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--fg-1);
+}
+
+.fatal .pill {
+  padding: 7px 15px;
+  font-size: 12.5px;
+  background: rgba(255, 255, 255, 0.1);
+}

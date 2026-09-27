@@ -1,0 +1,247 @@
+/* ------------------------------------------------------------------ *
+ * Titan Player - design tokens
+ *
+ * The visual language: near-black canvas, one accent hue pulled from the
+ * current artwork, generous radii, and a type scale with real contrast
+ * between the display sizes and the utility sizes.
+ * ------------------------------------------------------------------ */
+
+:root {
+  /* Canvas */
+  --bg-0: #06060a;
+  --bg-1: #0b0b12;
+  --bg-2: #12121c;
+  --bg-3: #1a1a27;
+  --bg-4: #232333;
+
+  /* Text */
+  --fg-0: #f4f4f7;
+  --fg-1: #b6b6c6;
+  --fg-2: #82829a;
+  --fg-3: #56566b;
+
+  /* Lines */
+  --line-1: rgba(255, 255, 255, 0.06);
+  --line-2: rgba(255, 255, 255, 0.11);
+  --line-3: rgba(255, 255, 255, 0.18);
+
+  /* Accent - overridden at runtime from artwork */
+  --accent: #7c5cff;
+  --accent-2: #22d3ee;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(124, 92, 255, 0.16);
+
+  /* Ambient wash driven by artwork, set as inline custom properties */
+  --amb-1: rgba(124, 92, 255, 0.3);
+  --amb-2: rgba(34, 211, 238, 0.16);
+  --amb-3: rgba(236, 72, 153, 0.12);
+
+  /* Geometry */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-full: 999px;
+
+  /* Elevation */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 24px 64px rgba(0, 0, 0, 0.55);
+  --glow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 40px rgba(0, 0, 0, 0.5);
+
+  /* Motion */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --fast: 120ms;
+  --mid: 220ms;
+  --slow: 420ms;
+
+  /* Layout */
+  --titlebar-h: 44px;
+  --sidebar-w: 264px;
+  --player-h: 92px;
+
+  /* Type */
+  --font-ui: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    sans-serif;
+  --font-display: "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg-0);
+  background: var(--bg-0);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  user-select: none;
+  cursor: default;
+}
+
+/* Ambient wash that follows the artwork. Fixed so it never scrolls away. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 12% 0%, var(--amb-1) 0%, transparent 60%),
+    radial-gradient(100% 70% at 88% 8%, var(--amb-2) 0%, transparent 58%),
+    radial-gradient(90% 60% at 50% 100%, var(--amb-3) 0%, transparent 65%);
+  filter: blur(40px) saturate(1.3);
+  opacity: 0.9;
+  transition: opacity var(--slow) var(--ease);
+  will-change: opacity;
+}
+
+.ambient::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(6, 6, 10, 0.25) 0%, rgba(6, 6, 10, 0.82) 70%);
+}
+
+/* Grain keeps the large flat gradients from banding. */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.022;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------- *
+ * Scrollbars
+ * ---------------------------------------------------------------- */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------- *
+ * Focus - visible for keyboards, quiet for mice
+ * ---------------------------------------------------------------- */
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ---------------------------------------------------------------- *
+ * Shared primitives
+ * ---------------------------------------------------------------- */
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.glass {
+  background: rgba(18, 18, 28, 0.72);
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  border: 1px solid var(--line-1);
+}
+
+.hairline {
+  border-color: var(--line-1);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectable {
+  user-select: text;
+  cursor: text;
+}
+
+/* Icon buttons share one shape so rows stay optically aligned. */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-full);
+  color: var(--fg-1);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg-0);
+}
+
+.icon-btn:active {
+  transform: scale(0.92);
+}
+
+.icon-btn:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.icon-btn.on {
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+release/
+*.tsbuildinfo
+
+# electron-builder caches
+.cache/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Local environment and editor state
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Never commit the app's own saved state if it ever lands in the tree
+titan-player.json
+titan-player.json.tmp

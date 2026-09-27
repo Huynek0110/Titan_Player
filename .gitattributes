@@ -1,0 +1,19 @@
+# Normalise line endings in the repository, check out per platform.
+* text=auto eol=lf
+
+# Windows and macOS scripts must stay CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.exe binary
+*.flac binary
+*.mp3 binary
+*.wav binary
+*.ogg binary

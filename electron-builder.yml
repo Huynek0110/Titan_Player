@@ -1,0 +1,63 @@
+appId: com.titan.player
+productName: Titan Player
+copyright: Copyright © 2026 Titan Player
+
+directories:
+  output: release
+  buildResources: build
+
+asar: true
+
+files:
+  - out/**/*
+  - package.json
+  - '!src/**'
+  - '!electron.vite.config.*'
+  - '!{.gitignore,.editorconfig,tsconfig*.json,AGENTS.md}'
+  - '!{RESEARCH*.md,README.md,*.log}'
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.svg
+  executableName: titan-player
+  # asInvoker means the app never asks for elevation. A music player has no
+  # business running as administrator.
+  requestedExecutionLevel: asInvoker
+
+nsis:
+  # Assisted install wizard rather than a one-click silent install, so the user
+  # can pick the directory.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Titan Player
+  uninstallDisplayName: Titan Player
+  artifactName: ${name}-${version}-setup.${ext}
+  differentialPackage: true
+
+portable:
+  artifactName: ${name}-${version}-portable.${ext}
+
+# music-metadata is pure JavaScript with no native modules, so there is nothing
+# to unpack here. Left in place as the place to add it if that ever changes.
+asarUnpack: []
+
+fileAssociations:
+  - ext: mp3
+    name: MP3 Audio File
+    role: Viewer
+  - ext: flac
+    name: FLAC Audio File
+    role: Viewer
+  - ext: m4a
+    name: M4A Audio File
+    role: Viewer
+  - ext: ogg
+    name: Ogg Vorbis Audio File
+    role: Viewer

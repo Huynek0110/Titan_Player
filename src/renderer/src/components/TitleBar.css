@@ -1,0 +1,61 @@
+.titlebar {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  height: var(--titlebar-h);
+  /* The app owns the full strip, so the drag region spans it. */
+  -webkit-app-region: drag;
+  background: linear-gradient(180deg, rgba(10, 10, 16, 0.9), rgba(10, 10, 16, 0));
+  pointer-events: none;
+}
+
+.titlebar-drag {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 18px;
+}
+
+.titlebar-title {
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+  opacity: 0.85;
+}
+
+/* Right inset clears the native overlay buttons, which are 44px tall and about
+   138px wide for minimise/maximise/close combined. */
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* Space for the two native buttons on the right. */
+  margin-right: 78px;
+  padding-right: 6px;
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+}
+
+.titlebar-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.titlebar-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg-0);
+}
+
+.titlebar-btn:active {
+  transform: scale(0.94);
+}

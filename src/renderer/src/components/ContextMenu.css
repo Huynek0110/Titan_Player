@@ -1,0 +1,85 @@
+.context-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: transparent;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 901;
+  min-width: 208px;
+  max-width: 300px;
+  padding: 4px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+  transform-origin: top left;
+  animation: context-in 110ms var(--ease);
+}
+
+@keyframes context-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.context-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--fg-1);
+  text-align: left;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.context-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--fg-0);
+}
+
+.context-item:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.context-item.danger {
+  color: #ff8080;
+}
+
+.context-item.danger:hover:not(:disabled) {
+  background: rgba(255, 90, 90, 0.14);
+  color: #ff9d9d;
+}
+
+.context-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.context-hint {
+  margin-left: auto;
+  padding-left: 14px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-3);
+}
+
+.context-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--line-2);
+}

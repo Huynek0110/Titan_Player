@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1440"/>
+      <stop offset="55%" stop-color="#2b1a5c"/>
+      <stop offset="100%" stop-color="#0d2a3a"/>
+    </linearGradient>
+    <linearGradient id="note" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#cbb8ff"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7c5cff"/>
+      <stop offset="50%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Vinyl grooves, low contrast, behind the mark. -->
+  <g fill="none" stroke="#ffffff" stroke-opacity="0.055" stroke-width="3">
+    <circle cx="256" cy="256" r="186"/>
+    <circle cx="256" cy="256" r="158"/>
+    <circle cx="256" cy="256" r="130"/>
+  </g>
+
+  <!-- Waveform bar mark: five bars, centre tallest. -->
+  <g fill="url(#wave)">
+    <rect x="118" y="228" width="26" height="56" rx="13"/>
+    <rect x="166" y="196" width="26" height="120" rx="13"/>
+    <rect x="214" y="152" width="26" height="208" rx="13"/>
+    <rect x="262" y="188" width="26" height="136" rx="13"/>
+    <rect x="310" y="222" width="26" height="68" rx="13"/>
+    <rect x="358" y="240" width="26" height="32" rx="13"/>
+  </g>
+
+  <!-- Headphone arc, tying the bars to audio. -->
+  <path d="M150 300a106 106 0 0 1 212 0"
+        fill="none" stroke="url(#note)" stroke-width="19" stroke-linecap="round" opacity="0.92"/>
+  <rect x="138" y="292" width="30" height="62" rx="15" fill="url(#note)"/>
+  <rect x="344" y="292" width="30" height="62" rx="15" fill="url(#note)"/>
+</svg>
