@@ -30,12 +30,20 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
     isPlaying: false,
     time: 0,
     duration: 0,
-    volume: settings?.volume ?? 0.8,
+    volume: 0.8,
     muted: false,
     buffered: 0,
     error: null,
     isLoading: false,
   })
+
+  // The useState initialiser runs once, before the async bootstrap has delivered
+  // the persisted settings, so reading volume from there silently discarded it.
+  // Adopt it as soon as it arrives.
+  useEffect(() => {
+    if (!settings) return
+    setState((s) => (s.volume === 0.8 && settings.volume !== 0.8 ? { ...s, volume: settings.volume } : s))
+  }, [settings])
 
   // Set when the element should start playing, so a track change triggered by
   // the queue can autoplay while an explicit pause does not.
@@ -109,13 +117,19 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
       const mode = store.settings?.repeat ?? "off"
       if (mode === "one") {
         audio.currentTime = 0
-        void audio.play()
+        void audio.play().catch(() => {
+          setState((s) => ({ ...s, isPlaying: false }))
+        })
         return
       }
-      const last = queueIndex >= queue.length - 1
-      if (last && mode !== "all") {
-        shouldPlayRef.current = false
-        setState((s) => ({ ...s, isPlaying: false }))
+      // `queue:step` refuses to move past the end, so repeat-all has to wrap
+      // explicitly or playback simply stops at the last track.
+      if (queueIndex >= queue.length - 1) {
+        if (mode === "all" && queue.length > 0) store.jumpTo(0)
+        else {
+          shouldPlayRef.current = false
+          setState((s) => ({ ...s, isPlaying: false }))
+        }
         return
       }
       store.playNext()
@@ -156,9 +170,18 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
-      // Never steal keys from a text field.
-      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return
+      // Never steal keys from a text field, or from a control the user is
+      // operating. Preventing the default on Space would break keyboard
+      // activation of every button in the app.
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return
       if (target?.isContentEditable) return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      // A focused button, link or slider owns Space and the arrow keys.
+      const interactive = target?.closest(
+        "button, a, input, select, textarea, [role='slider'], [role='button'], [contenteditable='true']",
+      )
+      if (interactive) return
+      if (event.defaultPrevented) return
 
       switch (event.key) {
         case " ":
@@ -221,10 +244,15 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
     [audioRef],
   )
 
-  const setVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume))
-    setState((s) => ({ ...s, volume: clamped, muted: clamped === 0 ? s.muted : false }))
-  }, [])
+  const setVolume = useCallback(
+    (volume: number) => {
+      const clamped = Math.max(0, Math.min(1, volume))
+      setState((s) => ({ ...s, volume: clamped, muted: clamped === 0 ? s.muted : false }))
+      // Persist, throttled by the input's own drag rate in practice.
+      void store.updateSettings({ volume: clamped })
+    },
+    [store],
+  )
 
   const toggleMute = useCallback(() => {
     setState((s) => ({ ...s, muted: !s.muted }))
@@ -259,31 +287,57 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   const ensureAnalyser = useCallback((): AnalyserNode | null => {
     const audio = audioRef.current
     if (!audio) return null
-    if (analyserRef.current) return analyserRef.current
+    if (analyserRef.current) {
+      void audioCtxRef.current?.resume().catch(() => {})
+      return analyserRef.current
+    }
 
     try {
-      const Ctor = window.AudioContext ?? (window as never as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const Ctor =
+        window.AudioContext ??
+        (window as never as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       const ctx = audioCtxRef.current ?? new Ctor()
       audioCtxRef.current = ctx
 
       // A MediaElementSource can only be created once per element, so guard it.
-      if (!(audio as HTMLAudioElement & { __titanSource?: MediaElementAudioSourceNode }).__titanSource) {
+      const element = audio as HTMLAudioElement & {
+        __titanSource?: MediaElementAudioSourceNode
+      }
+
+      if (!element.__titanSource) {
         const source = ctx.createMediaElementSource(audio)
-        ;(audio as HTMLAudioElement & { __titanSource?: MediaElementAudioSourceNode }).__titanSource = source
+        element.__titanSource = source
+        // Connect to the destination *outside* the creation branch. Doing it
+        // inside meant a throw here left the element permanently silent, since
+        // every later call would short-circuit on the existing source.
         source.connect(ctx.destination)
       }
 
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       analyser.smoothingTimeConstant = 0.8
-      const source = (audio as HTMLAudioElement & { __titanSource?: MediaElementAudioSourceNode }).__titanSource
-      source?.connect(analyser)
+      element.__titanSource?.connect(analyser)
 
       analyserRef.current = analyser
+
+      // Once an element is routed through Web Audio its output only exists in
+      // that graph, so a context left suspended means permanent silence. Resume
+      // unconditionally and surface the failure rather than assuming it worked.
+      void ctx
+        .resume()
+        .then(() => {
+          if (ctx.state !== "running") {
+            console.warn(`[titan] AudioContext is ${ctx.state}; audio may be silent`)
+          }
+        })
+        .catch((err) => {
+          console.error("[titan] could not resume the AudioContext:", err)
+        })
+
       return analyser
-    } catch {
-      // Autoplay policy or an unavailable AudioContext. The visualiser simply
-      // stays empty; playback itself is unaffected.
+    } catch (err) {
+      // Never let the visualiser take playback down with it.
+      console.error("[titan] analyser setup failed:", err)
       return null
     }
   }, [audioRef])

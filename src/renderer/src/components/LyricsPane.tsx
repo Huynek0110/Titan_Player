@@ -7,8 +7,13 @@ import "./LyricsPane.css"
 interface LyricsPaneProps {
   lines: LyricLine[]
   plain?: string
-  /** Current playback position in seconds. */
-  time: number
+  /**
+   * Reads the live playhead. A function, not a value, on purpose: the fill runs
+   * in a rAF loop and must sample the audio clock every frame. Reading a prop
+   * fed by `timeupdate` would only fire about four times a second, turning the
+   * sweep into a visible staircase.
+   */
+  getTime: () => number
   isPlaying: boolean
   onSeek: (seconds: number) => void
   hasAny: boolean
@@ -32,7 +37,7 @@ const IDLE_BEFORE_RESUME = 4000
 export default function LyricsPane({
   lines,
   plain,
-  time,
+  getTime,
   isPlaying,
   onSeek,
   hasAny,
@@ -47,48 +52,74 @@ export default function LyricsPane({
   const synced = lines.length > 0
 
   // --- which line is active ---------------------------------------------
+  // Polled from the same rAF loop that drives the fill, so the active line and
+  // the sweep can never disagree by a frame.
   useEffect(() => {
     if (!synced) return
-    const index = activeLineIndex(lines, time)
-    if (index !== active) setActive(index)
-  }, [time, lines, synced, active])
+    let raf = 0
+    let lastIndex = -2
+    const tick = () => {
+      const time = getTime()
+      const index = activeLineIndex(lines, time)
+      if (index !== lastIndex) {
+        lastIndex = index
+        setActive(index)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [lines, synced, getTime])
 
   // --- the sweep --------------------------------------------------------
   // Writes `--fill` on the active line only. Writing to a single element keeps
   // this to one style mutation per frame instead of one per line.
   useEffect(() => {
     if (!synced || active < 0) return
-    const element = lineRefs.current.get(active)
-    if (!element) return
 
     let raf = 0
     const tick = () => {
-      const start = lines[active].time
-      const next = lines[active + 1]?.time
-      // Hold the line fully filled if there is no following timestamp to
-      // interpolate towards, rather than snapping back to empty.
-      const span = next !== undefined ? Math.max(0.35, next - start) : 6
-      const progress = Math.max(0, Math.min(1, (time - start) / span))
-      element.style.setProperty("--fill", `${(progress * 100).toFixed(2)}%`)
+      const element = lineRefs.current.get(active)
+      if (element) {
+        const time = getTime()
+        const start = lines[active].time
+        const next = lines[active + 1]?.time
+        // Hold the line fully filled if there is no following timestamp to
+        // interpolate towards, rather than snapping back to empty.
+        const span = next !== undefined ? Math.max(0.35, next - start) : 6
+        const progress = Math.max(0, Math.min(1, (time - start) / span))
+        element.style.setProperty("--fill", `${(progress * 100).toFixed(2)}%`)
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [active, lines, time, synced])
+  }, [active, lines, synced, getTime])
+
+  // A line that stops being active keeps whatever fill it had reached, so clear
+  // it. Without this, seeking backwards leaves every skipped line rendered at
+  // full brightness instead of the dimmed upcoming state.
+  useEffect(() => {
+    for (const [index, element] of lineRefs.current) {
+      if (index !== active) element.style.removeProperty("--fill")
+    }
+  }, [active])
 
   // --- auto-scroll ------------------------------------------------------
-  const scrollToActive = useCallback(
-    (index: number) => {
-      const container = scrollRef.current
-      const element = lineRefs.current.get(index)
-      if (!container || !element) return
-      // Centre the active line in the viewport, which reads better than
-      // scrolling it to the very top.
-      const target = element.offsetTop - container.clientHeight * 0.38
-      container.scrollTo({ top: Math.max(0, target), behavior: "smooth" })
-    },
-    [],
-  )
+  const scrollToActive = useCallback((index: number) => {
+    const container = scrollRef.current
+    const element = lineRefs.current.get(index)
+    if (!container || !element) return
+    // `offsetTop` is measured against the nearest *positioned* ancestor, which
+    // is the full-screen overlay rather than this scroll container. Subtracting
+    // the container's own offset is what makes the line actually land 38% down.
+    const target =
+      element.offsetTop -
+      container.offsetTop -
+      container.clientHeight * 0.38 +
+      container.scrollTop
+    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" })
+  }, [])
 
   useEffect(() => {
     if (!autoScroll || active < 0) return
@@ -159,8 +190,7 @@ export default function LyricsPane({
               index === active ? "active" : index < active ? "past" : "future"
             // Within 4s of the next line, treat the following line as "next" so
             // the eye is led there slightly early.
-            const upcoming =
-              lines[index + 1] !== undefined && lines[index + 1].time - time < 4
+            const upcoming = lines[index + 1] !== undefined && lines[index + 1].time - getTime() < 4
 
             return (
               <button

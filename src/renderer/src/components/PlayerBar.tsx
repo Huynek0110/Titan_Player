@@ -180,7 +180,6 @@ interface SeekBarProps {
 function SeekBar({ time, duration, buffered, onSeek }: SeekBarProps) {
   const trackRef = useRef<HTMLDivElement>(null)
   const fillRef = useRef<HTMLDivElement>(null)
-  const [hover, setHover] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
   // Where the fill currently is, and where it is heading. The gap between them
   // is the spring.
@@ -231,7 +230,6 @@ function SeekBar({ time, duration, buffered, onSeek }: SeekBarProps) {
 
   const onPointerMove = (event: React.PointerEvent) => {
     const r = ratioFromEvent(event.clientX)
-    setHover(r)
     if (!dragging) return
     seekRatioRef.current = r
     chaseRef.current.target = r
@@ -242,7 +240,16 @@ function SeekBar({ time, duration, buffered, onSeek }: SeekBarProps) {
     if (!dragging) return
     event.currentTarget.releasePointerCapture(event.pointerId)
     setDragging(false)
+    // Clear the drag override. Leaving it set pinned the spring target to the
+    // release position forever, so the fill stopped advancing for the rest of
+    // the track while the time labels carried on moving.
+    seekRatioRef.current = null
     onSeek(ratioFromEvent(event.clientX) * duration)
+  }
+
+  const onPointerCancel = () => {
+    setDragging(false)
+    seekRatioRef.current = null
   }
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -258,8 +265,6 @@ function SeekBar({ time, duration, buffered, onSeek }: SeekBarProps) {
       onSeek(0)
     }
   }
-
-  const showRatio = dragging ? (seekRatioRef.current ?? ratio) : (hover ?? ratio)
 
   return (
     <div className="seek">
@@ -277,7 +282,8 @@ function SeekBar({ time, duration, buffered, onSeek }: SeekBarProps) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => setHover(null)}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onPointerCancel}
         onKeyDown={onKeyDown}
       >
         <div className="seek-rail" />
@@ -285,9 +291,14 @@ function SeekBar({ time, duration, buffered, onSeek }: SeekBarProps) {
           className="seek-buffer"
           style={{ transform: `scaleX(${duration > 0 ? Math.min(1, buffered / duration) : 0})` }}
         />
-        <div className="seek-fill" ref={fillRef}>
-          <span className="seek-knob" style={{ left: `${showRatio * 100}%` }} />
-        </div>
+        <div className="seek-fill" ref={fillRef} />
+        {/* A sibling of the fill, not a child: the fill carries a scaleX, which
+            would squash the knob into an ellipse and resolve its percentage
+            against the scaled width rather than the track width. */}
+        <span
+          className="seek-knob"
+          style={{ left: `${(chaseRef.current.shown * 100).toFixed(2)}%` }}
+        />
       </div>
 
       <span className="seek-time tabular">{formatDuration(duration)}</span>

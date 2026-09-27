@@ -2,9 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      `media:` must be listed in media-src, img-src and connect-src. Cover art
+      and audio both arrive over the custom media:// scheme, and without these
+      the whole design silently degrades: audio refuses to play and every image
+      falls back to its monogram.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' file: blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' media: blob: data:; media-src 'self' media: blob: data:; connect-src 'self' media:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Titan Player</title>

@@ -14,9 +14,9 @@ interface ArtworkProps {
 }
 
 /**
- * Cover art with a graceful fallback. A missing or broken image falls back to a
- * tinted monogram derived from the title, which is far more recognisable than a
- * generic grey square.
+ * Cover art with a graceful fallback. A missing or unreadable image falls back
+ * to a tinted monogram derived from the title, which is far more recognisable
+ * than a generic grey square.
  */
 export default function Artwork({
   trackId,
@@ -26,9 +26,13 @@ export default function Artwork({
   className = "",
   seed,
 }: ArtworkProps) {
+  // The failure flag is tracked against the id that produced it. Storing just a
+  // boolean meant one undecodable cover poisoned every later track, because the
+  // component instance is reused at a stable position without a React key.
+  const [failedFor, setFailedFor] = useState<string | null>(null)
+  const failed = failedFor === trackId
   const url = window.titan.coverUrl(trackId, hasArtwork)
-  const [failed, setFailed] = useState(false)
-  const showImage = Boolean(url) && hasArtwork && !failed
+  const showImage = hasArtwork && !failed
 
   const monogram = (seed ?? alt).trim().charAt(0).toUpperCase() || "♪"
   // Deterministic hue per track keeps the fallback varied but stable.
@@ -46,7 +50,7 @@ export default function Artwork({
       }}
     >
       {showImage && url ? (
-        <img src={url} alt={alt} draggable={false} onError={() => setFailed(true)} />
+        <img src={url} alt={alt} draggable={false} onError={() => setFailedFor(trackId)} />
       ) : (
         <span className="artwork-fallback" aria-hidden="true">
           <Music size={Math.max(14, Math.round(size * 0.34))} />

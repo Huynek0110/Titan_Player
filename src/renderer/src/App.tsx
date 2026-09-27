@@ -27,6 +27,11 @@ export default function App() {
   const player = usePlayer(audioRef)
   const [searchFocused, setSearchFocused] = useState(false)
 
+  // The lyrics sweep must sample the audio clock every animation frame, so it
+  // reads the element directly rather than the `timeupdate`-driven state, which
+  // only updates about four times a second.
+  const getTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
+
   // --- ambient palette follows the playing track -------------------------
   useEffect(() => {
     if (!currentTrack) return
@@ -57,6 +62,8 @@ export default function App() {
         return
       }
       if (typing) return
+      // Never shadow a browser or OS chord.
+      if (event.ctrlKey || event.metaKey || event.altKey) return
 
       if (event.key === "q" || event.key === "Q") {
         store.setShowQueue(!store.showQueue)
@@ -128,7 +135,12 @@ export default function App() {
     }
   }, [view, activePlaylistId, store.playlists])
 
-  const totalSeconds = store.visibleTracks.reduce((sum, t) => sum + t.duration, 0)
+  // Memoised. Without this, every `timeupdate` re-summed the whole library:
+  // a few hundred thousand property reads a second for one subtitle string.
+  const totalSeconds = useMemo(
+    () => store.visibleTracks.reduce((sum, t) => sum + t.duration, 0),
+    [store.visibleTracks],
+  )
 
   return (
     <div className={`app ${nowPlayingOpen ? "np-open" : ""}`}>
@@ -224,7 +236,7 @@ export default function App() {
           <LyricsPane
             lines={currentTrack.lyrics.lines}
             plain={currentTrack.lyrics.plain}
-            time={player.state.time}
+            getTime={getTime}
             isPlaying={player.state.isPlaying}
             onSeek={player.seek}
             hasAny={currentTrack.lyrics.source !== "none"}
@@ -243,9 +255,14 @@ export default function App() {
         <div className="fatal glass" role="alert">
           <strong>Something went wrong</strong>
           <p className="selectable">{store.error}</p>
-          <button className="pill" onClick={() => void store.rescan()}>
-            Try again
-          </button>
+          <div className="fatal-actions">
+            <button className="pill" onClick={() => void store.rescan()}>
+              Try again
+            </button>
+            <button className="pill ghost" onClick={() => store.dismissError()}>
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
     </div>

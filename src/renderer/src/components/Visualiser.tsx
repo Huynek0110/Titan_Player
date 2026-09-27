@@ -29,9 +29,25 @@ export default function Visualiser({ getAnalyser, active, height = 64 }: Visuali
     let data: Uint8Array<ArrayBuffer> | null = null
     let smoothed = new Float32Array(BARS)
     let analyser: AnalyserNode | null = null
+    // The accent only changes when the track changes, so resolve it once here.
+    // Reading it inside the bar loop meant 56 forced style resolutions per
+    // frame — roughly 3,400 a second, all returning the same value.
+    let accent = "#7c5cff"
+    let dpr = 1
+
+    const resolveAccent = () => {
+      const value = getComputedStyle(document.documentElement)
+        .getPropertyValue("--accent")
+        .trim()
+      if (value) accent = value
+    }
+    resolveAccent()
+    const accentTimer = window.setInterval(resolveAccent, 1000)
 
     const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
+      // Clamp the same way when dividing back out, or the bars occupy only a
+      // fraction of the canvas on a display whose DPR exceeds 2.
+      dpr = Math.min(window.devicePixelRatio || 1, 2)
       const rect = canvas.getBoundingClientRect()
       canvas.width = Math.max(1, Math.round(rect.width * dpr))
       canvas.height = Math.max(1, Math.round(height * dpr))
@@ -42,7 +58,7 @@ export default function Visualiser({ getAnalyser, active, height = 64 }: Visuali
     observer.observe(canvas)
 
     const draw = () => {
-      const w = canvas.width / (window.devicePixelRatio || 1)
+      const w = canvas.width / dpr
       const h = height
 
       ctx.clearRect(0, 0, w, h)
@@ -56,6 +72,12 @@ export default function Visualiser({ getAnalyser, active, height = 64 }: Visuali
 
       const gap = 2
       const barW = Math.max(1.5, (w - gap * (BARS - 1)) / BARS)
+
+      // One gradient for the whole frame rather than one per bar.
+      const gradient = ctx.createLinearGradient(0, 0, 0, h)
+      gradient.addColorStop(0, accent)
+      gradient.addColorStop(1, "rgba(255,255,255,0.18)")
+      ctx.fillStyle = gradient
 
       for (let i = 0; i < BARS; i += 1) {
         let target = 0
@@ -73,11 +95,6 @@ export default function Visualiser({ getAnalyser, active, height = 64 }: Visuali
         const x = i * (barW + gap)
         const y = h - barH
 
-        const gradient = ctx.createLinearGradient(0, y, 0, h)
-        gradient.addColorStop(0, getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#7c5cff")
-        gradient.addColorStop(1, "rgba(255,255,255,0.18)")
-
-        ctx.fillStyle = gradient
         ctx.beginPath()
         ctx.roundRect(x, y, barW, barH, Math.min(barW / 2, 2))
         ctx.fill()
@@ -89,6 +106,7 @@ export default function Visualiser({ getAnalyser, active, height = 64 }: Visuali
     raf = requestAnimationFrame(draw)
     return () => {
       cancelAnimationFrame(raf)
+      window.clearInterval(accentTimer)
       observer.disconnect()
     }
   }, [active, getAnalyser, height])

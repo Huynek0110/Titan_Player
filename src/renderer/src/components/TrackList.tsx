@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Track } from "@shared/types"
 import { useStore } from "../state/store"
 import { formatDuration, compareStrings } from "../lib/format"
@@ -57,8 +57,8 @@ export default function TrackList({
   } = store
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollObserverRef = useRef<ResizeObserver | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
-  const [viewportH, setViewportH] = useState(600)
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; index: number } | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dragIndex, setDragIndex] = useState<number | null>(null)
@@ -67,18 +67,31 @@ export default function TrackList({
   // --- windowing ---------------------------------------------------------
   // A fixed row height lets the visible window be computed arithmetically, so
   // a five-figure library costs the same as a short one.
-  useLayoutEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const observer = new ResizeObserver(() => setViewportH(el.clientHeight))
-    observer.observe(el)
-    setViewportH(el.clientHeight)
-    return () => observer.disconnect()
+  //
+  // The observer is attached by a callback ref rather than a layout effect:
+  // the scroll container only exists once `tracks` is non-empty, and the first
+  // render is always empty, so an effect with `[]` deps bailed on a null ref and
+  // `viewportH` stayed frozen at its initial guess for the life of the component.
+  const [viewportH, setViewportH] = useState(600)
+
+  const attachScroll = useCallback((node: HTMLDivElement | null) => {
+    scrollRef.current = node
+    if (!node) return
+    setViewportH(node.clientHeight)
+    const observer = new ResizeObserver(() => setViewportH(node.clientHeight))
+    observer.observe(node)
+    scrollObserverRef.current?.disconnect()
+    scrollObserverRef.current = observer
   }, [])
 
+  useEffect(() => () => scrollObserverRef.current?.disconnect(), [])
+
   const total = tracks.length
-  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN)
-  const end = Math.min(total, Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN)
+  // Clamp both ends and order them. A stale `scrollTop` surviving a view switch
+  // (scroll to row 500, then switch to a 3-track list) would otherwise compute
+  // start > end and render a blank list.
+  const start = total === 0 ? 0 : Math.min(Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN), total)
+  const end = Math.min(total, Math.max(start, Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN))
   const slice = tracks.slice(start, end)
   const padTop = start * ROW_H
   const padBottom = Math.max(0, (total - end) * ROW_H)
@@ -212,6 +225,7 @@ export default function TrackList({
   // --- drag to reorder ---------------------------------------------------
   const onDragStart = (index: number) => {
     setDragIndex(index)
+    setDropIndex(index)
   }
 
   const onDragOverRow = (index: number) => {
@@ -219,22 +233,22 @@ export default function TrackList({
     setDropIndex(index)
   }
 
-  const commitDrop = () => {
+  const commitDrop = useCallback(() => {
     if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
       onReorder?.(dragIndex, dropIndex)
     }
     setDragIndex(null)
     setDropIndex(null)
-  }
+  }, [dragIndex, dropIndex, onReorder])
 
-  // Clear a stale drag when the pointer is released outside any row.
-  useEffect(() => {
-    if (dragIndex === null) return
-    const onUp = () => commitDrop()
-    window.addEventListener("pointerup", onUp)
-    return () => window.removeEventListener("pointerup", onUp)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragIndex, dropIndex])
+  /*
+   * A native HTML5 drag never delivers `pointerup` to the source row — Chromium
+   * fires `pointercancel` and suppresses the rest of the compatibility mouse
+   * events for the duration. Committing from `pointerup` therefore never ran, so
+   * dragging left the row stuck at 40% opacity and fired a bogus reorder on the
+   * next unrelated click. `dragend` is the event that actually lands.
+   */
+  const onDragEnd = () => commitDrop()
 
   if (total === 0) {
     return (
@@ -266,9 +280,14 @@ export default function TrackList({
 
       <div
         className="tracklist-body"
-        ref={scrollRef}
+        ref={attachScroll}
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-        onClick={() => setSelected(new Set())}
+        // Only clears the selection for a genuine background click. Row clicks
+        // bubble through here too, and React batches both updates, so an
+        // unconditional clear made multi-select impossible.
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setSelected(new Set())
+        }}
       >
         <div style={{ height: padTop }} />
         {slice.map((track, i) => {
@@ -294,6 +313,8 @@ export default function TrackList({
               draggable={reorderable}
               onDragStart={() => onDragStart(index)}
               onDragOver={() => onDragOverRow(index)}
+              onDragEnd={onDragEnd}
+              onDrop={commitDrop}
             >
               {reorderable && (
                 <span className="row-grip" aria-hidden="true">

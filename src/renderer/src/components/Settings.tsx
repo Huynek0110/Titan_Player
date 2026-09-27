@@ -44,7 +44,13 @@ export default function Settings() {
           </span>
           <button
             className={`toggle ${settings.useSystemMusicFolder ? "on" : ""}`}
-            onClick={() => void updateSettings({ useSystemMusicFolder: !settings.useSystemMusicFolder })}
+            onClick={async () => {
+              const next = !settings.useSystemMusicFolder
+              // Re-scan, or the library silently keeps the old contents until
+              // someone presses Rescan by hand.
+              await updateSettings({ useSystemMusicFolder: next })
+              await rescan()
+            }}
             role="switch"
             aria-checked={settings.useSystemMusicFolder}
           >

@@ -109,6 +109,10 @@ function reducer(state: State, action: Action): State {
         sortBy: action.settings.sortBy,
         sortDir: action.settings.sortDir,
         view: (action.settings.lastView as ViewId) ?? "library",
+        // Only Favourites carries a playlist id. Restoring a playlist view with
+        // no id used to render the library under the heading "Playlist", with
+        // nothing highlighted in the sidebar.
+        activePlaylistId: action.settings.lastView === "favourites" ? "sys:favourites" : null,
       }
 
     case "scan:progress":
@@ -127,6 +131,9 @@ function reducer(state: State, action: Action): State {
         queueIndex: reindex(queue, state.queueIndex, currentId),
         failedCount: action.failed,
         lastScanMs: action.ms,
+        // A successful scan clears any earlier failure, so the error panel
+        // cannot sit on top of a working library.
+        error: null,
         progress: { phase: "done", found: action.tracks.length, parsed: action.tracks.length, total: action.tracks.length },
       }
     }
@@ -149,12 +156,14 @@ function reducer(state: State, action: Action): State {
       return { ...state, search: action.search }
 
     case "play":
+      // Deliberately does not open the now-playing overlay. It covers the
+      // transport, so opening it on every row click meant double-clicking a
+      // track to listen removed play/pause/next/volume from the screen.
       return {
         ...state,
         queue: action.queue,
         queueIndex: action.index,
         shuffled: action.shuffled ?? false,
-        nowPlayingOpen: true,
       }
 
     case "queue:replace":
@@ -173,12 +182,26 @@ function reducer(state: State, action: Action): State {
     case "queue:add": {
       if (action.ids.length === 0) return state
       const currentId = state.queueIndex >= 0 ? state.queue[state.queueIndex] : null
-      const without = state.queue.filter((id) => !action.ids.includes(id))
       const additions = action.ids.filter((id) => state.byId.has(id))
       if (additions.length === 0) return state
-      // "Next" inserts directly after the playing track, preserving its order.
-      const at = action.position === "next" && state.queueIndex >= 0 ? state.queueIndex + 1 : without.length
-      const queue = [...without.slice(0, at), ...additions, ...without.slice(at)]
+
+      // Re-adding an already-queued track is a no-op rather than a duplicate.
+      const fresh = additions.filter((id) => !state.queue.includes(id))
+      if (fresh.length === 0) return state
+      const without = state.queue.filter((id) => !fresh.includes(id))
+
+      // The insertion index must be computed against `without`, not the original
+      // queue: the latter is longer by however many additions were already
+      // present, which pushed the slice past the end and appended instead.
+      let at: number
+      if (action.position === "next" && state.queueIndex >= 0) {
+        const currentPos = without.indexOf(currentId ?? "")
+        at = (currentPos === -1 ? Math.min(state.queueIndex, without.length) : currentPos) + 1
+      } else {
+        at = without.length
+      }
+
+      const queue = [...without.slice(0, at), ...fresh, ...without.slice(at)]
       return { ...state, queue, queueIndex: reindex(queue, state.queueIndex, currentId) }
     }
 
@@ -232,6 +255,7 @@ export interface Store extends State {
   setSearch: (search: string) => void
   setNowPlaying: (open: boolean) => void
   setShowQueue: (open: boolean) => void
+  dismissError: () => void
   updateSettings: (patch: Partial<LibrarySettings>) => Promise<void>
   createPlaylist: (name: string) => Promise<Playlist>
   renamePlaylist: (id: string, name: string) => Promise<void>
@@ -275,7 +299,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ])
         if (cancelled) return
         dispatch({ type: "ready", settings, playlists, favourites })
-        await scan()
+        // Pass the freshly fetched settings through, so the first scan does not
+        // depend on a re-render having happened yet.
+        await scan(settings)
       } catch (err) {
         if (!cancelled) {
           dispatch({ type: "error", message: err instanceof Error ? err.message : String(err) })
@@ -294,8 +320,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     )
   }, [])
 
-  const scan = useCallback(async () => {
-    const current = stateRef.current.settings
+  const scan = useCallback(async (settingsOverride?: LibrarySettings) => {
+    // Read through the ref, but allow the caller to pass the settings it just
+    // fetched. On a cold start the reducer has not re-rendered yet, so the ref
+    // still holds null and the first scan would silently do nothing — leaving
+    // the audio protocol's root set empty and nothing playable.
+    const current = settingsOverride ?? stateRef.current.settings
     if (!current) return
     try {
       const result = await window.titan.scan(current.musicFolders, current.extensions)
@@ -421,6 +451,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setSearch: (search) => dispatch({ type: "search", search }),
       setNowPlaying: (open) => dispatch({ type: "nowPlaying", open }),
       setShowQueue: (open) => dispatch({ type: "showQueue", open }),
+      dismissError: () => dispatch({ type: "error", message: null }),
       updateSettings: async (patch) => {
         const settings = await window.titan.updateSettings(patch)
         dispatch({ type: "settings:set", settings })
@@ -470,9 +501,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const current = stateRef.current.settings
         if (!current) return
         const merged = [...new Set([...current.musicFolders, ...picked])]
-        await window.titan.updateSettings({ musicFolders: merged })
-        dispatch({ type: "settings:set", settings: { ...current, musicFolders: merged } })
-        await rescan()
+        const settings = await window.titan.updateSettings({ musicFolders: merged })
+        dispatch({ type: "settings:set", settings })
+        // Hand the scan the settings just written. Letting it read the ref
+        // instead meant it re-scanned the *previous* folder list, so a newly
+        // added folder stayed invisible until Rescan was pressed by hand.
+        await scan(settings)
       },
       removeFolder: async (folder) => {
         const current = stateRef.current.settings
@@ -480,7 +514,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const next = current.musicFolders.filter((f) => f !== folder)
         const settings = await window.titan.updateSettings({ musicFolders: next })
         dispatch({ type: "settings:set", settings })
-        await rescan()
+        await scan(settings)
       },
     }
   }, [state, playTracks, enqueue, rescan])

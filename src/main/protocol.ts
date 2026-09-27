@@ -1,6 +1,6 @@
 import { app, net, protocol } from "electron"
-import path from "node:path"
 import { pathToFileURL } from "node:url"
+import path from "node:path"
 
 /**
  * A privileged `media://` scheme serving cover art and audio bytes.
@@ -27,15 +27,19 @@ const covers = new Map<string, CoverEntry>()
 /** Absolute paths a user has explicitly added. Audio outside these is refused. */
 const audioRoots = new Set<string>()
 
+/** Audio extensions the jail will serve, so a root cannot be used to read
+ *  arbitrary files that happen to live under it. */
+const AUDIO_EXT = new Set([
+  ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus",
+  ".wav", ".wma", ".aiff", ".aif", ".ape", ".wv", ".mp4",
+])
+
 export function publishCover(trackId: string, entry: CoverEntry): void {
   covers.set(trackId, entry)
 }
 
-export function clearCovers(keep?: Set<string>): void {
-  if (!keep) {
-    covers.clear()
-    return
-  }
+/** Keep only the covers whose track is still in the library. */
+export function pruneCovers(keep: Set<string>): void {
   for (const key of [...covers.keys()]) {
     if (!keep.has(key)) covers.delete(key)
   }
@@ -43,14 +47,28 @@ export function clearCovers(keep?: Set<string>): void {
 
 export function setAudioRoots(roots: string[]): void {
   audioRoots.clear()
-  for (const root of roots) audioRoots.add(path.resolve(root))
+  for (const root of roots) {
+    // Normalise case here so the comparison downstream is case-insensitive.
+    audioRoots.add(path.resolve(root).toLowerCase())
+  }
 }
 
+/**
+ * Whether `target` sits inside one of the trusted roots.
+ *
+ * The comparison is case-insensitive because `path.win32.relative` folds
+ * nothing while NTFS is case-preserving only. Skipping this makes a folder
+ * renamed from `Music` to `music` start failing with a 403, which reads as a
+ * playback bug rather than a permissions one.
+ */
 function isAllowedAudio(target: string): boolean {
   const resolved = path.resolve(target)
+  if (!AUDIO_EXT.has(path.extname(resolved).toLowerCase())) return false
+
+  const lowered = resolved.toLowerCase()
   for (const root of audioRoots) {
-    if (resolved === root) continue
-    const rel = path.relative(root, resolved)
+    if (lowered === root) continue
+    const rel = path.relative(root, lowered)
     // A leading ".." or an absolute result means the path escaped the root.
     if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return true
   }
@@ -66,6 +84,10 @@ export function registerMediaScheme(): void {
         standard: true,
         secure: true,
         supportFetchAPI: true,
+        // Required for the palette extractor. Without it the cover response is
+        // opaque to the renderer, `getImageData` throws a SecurityError, and
+        // the accent colour silently falls back to the default.
+        corsEnabled: true,
         // Without `stream`, Chromium buffers the whole response and seeking
         // stops working on long tracks.
         stream: true,
@@ -93,7 +115,12 @@ export function handleMediaProtocol(): void {
       return new Response(hit.bytes, {
         headers: {
           "content-type": hit.mime,
-          "cache-control": "no-cache",
+          // Lets the renderer read the pixels for palette extraction.
+          "access-control-allow-origin": "*",
+          "x-content-type-options": "nosniff",
+          // An immutable id means the bytes cannot change, so let the HTTP
+          // cache dedupe one shared album cover across every track.
+          "cache-control": "public, max-age=31536000, immutable",
         },
       })
     }
@@ -104,9 +131,24 @@ export function handleMediaProtocol(): void {
       if (!raw || !isAllowedAudio(raw)) {
         return new Response("forbidden", { status: 403 })
       }
-      // net.fetch on a file:// URL honours Range requests, which is what makes
-      // seeking in <audio> work.
-      return net.fetch(pathToFileURL(raw).toString())
+
+      /*
+       * Two details make this work, and both were found the hard way.
+       *
+       *  - The target must be a `file://` URL. Passing the original `media://`
+       *    request to `net.fetch` makes it fail to load, which Chromium reports
+       *    as MEDIA_ERR_SRC_NOT_SUPPORTED — the UI then claims the file is an
+       *    unsupported format when the file is in fact a valid FLAC that plays
+       *    perfectly over `file://` directly.
+       *  - `Range` has to be carried across by hand, because building a fresh
+       *    Request from the URL alone drops every header. A media element seeks
+       *    with a Range header, and without it seeking re-reads from byte zero.
+       */
+      const headers = new Headers()
+      const range = request.headers.get("Range")
+      if (range) headers.set("Range", range)
+
+      return net.fetch(pathToFileURL(raw).toString(), { headers })
     }
 
     return new Response("not found", { status: 404 })

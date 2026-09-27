@@ -67,7 +67,9 @@ const EMPTY_LYRICS: Lyrics = { synced: false, lines: [], source: "none" }
  * raw native tag list by hand and parsed locally.
  */
 function readLyrics(meta: IAudioMetadata): Lyrics {
-  // 1. Structured lyrics: ID3 USLT/SYLT, and Vorbis LYRICS/UNSYNCEDLYRICS.
+  // Step 1: structured lyrics from ID3 USLT/SYLT and Vorbis LYRICS/UNSYNCEDLYRICS.
+  // Collected rather than returned, so step 2 can still win with something richer.
+  const candidates: Lyrics[] = []
   const common = meta.common?.lyrics
   if (Array.isArray(common) && common.length > 0) {
     const tags = common as ILyricsTag[]
@@ -81,7 +83,12 @@ function readLyrics(meta: IAudioMetadata): Lyrics {
         .filter((line) => line.text.length > 0)
         .sort((a, b) => a.time - b.time)
       if (lines.length > 0) {
-        return { synced: true, lines, plain: synced.text ?? undefined, source: "embedded" }
+        candidates.push({
+          synced: true,
+          lines,
+          plain: synced.text ?? undefined,
+          source: "embedded",
+        })
       }
     }
     const plainTag = tags.find((tag) => typeof tag.text === "string" && tag.text.trim())
@@ -89,13 +96,18 @@ function readLyrics(meta: IAudioMetadata): Lyrics {
       // A plain-text tag can still turn out to be LRC once parsed properly.
       const parsed = parseLrc(plainTag.text)
       if (parsed.synced) {
-        return { synced: true, lines: parsed.lines, plain: parsed.plain, source: "embedded" }
+        candidates.push({ synced: true, lines: parsed.lines, plain: parsed.plain, source: "embedded" })
+      } else {
+        candidates.push({ synced: false, lines: [], plain: plainTag.text, source: "embedded" })
       }
-      return { synced: false, lines: [], plain: plainTag.text, source: "embedded" }
     }
   }
 
-  // 2. SYNCEDLYRICS and friends, read straight from the native tag list.
+  // Step 2: `SYNCEDLYRICS` is never mapped by music-metadata's Vorbis mapper, so
+  // it only exists in the raw native tag list. This has to be scanned even when
+  // step 1 produced something, because the common case (LrcGet) writes plain
+  // text to `LYRICS` *and* LRC to `SYNCEDLYRICS` — returning on the first
+  // mapped tag would discard the timing and silently downgrade every such file.
   const nativeTags = (meta.native as Record<string, Array<{ id: string; value: unknown }>>) ?? {}
   for (const container of Object.values(nativeTags)) {
     if (!Array.isArray(container)) continue
@@ -107,13 +119,18 @@ function readLyrics(meta: IAudioMetadata): Lyrics {
       if (!text.trim()) continue
       const parsed = parseLrc(text)
       if (parsed.synced) {
-        return { synced: true, lines: parsed.lines, plain: parsed.plain, source: "embedded" }
+        candidates.push({ synced: true, lines: parsed.lines, plain: parsed.plain, source: "embedded" })
+      } else {
+        candidates.push({ synced: false, lines: [], plain: text, source: "embedded" })
       }
-      return { synced: false, lines: [], plain: text, source: "embedded" }
     }
   }
 
-  return EMPTY_LYRICS
+  if (candidates.length === 0) return EMPTY_LYRICS
+
+  // Reduce by richness rather than taking the first hit: a synced source always
+  // beats a plain one, and among equals the one with more text wins.
+  return candidates.reduce((best, candidate) => preferSynced(best, candidate))
 }
 
 /** Look for a sidecar `.lrc` next to the audio file. */
@@ -125,7 +142,10 @@ async function readSidecarLrc(audioPath: string): Promise<Lyrics | null> {
   try {
     const raw = await fs.readFile(candidate, "utf8")
     const parsed = extractEmbeddedLyrics({ lyrics: raw })
-    if (parsed.source !== "none") return parsed
+    if (parsed.source !== "none") {
+      // Relabel: this came from a file next to the track, not from its tags.
+      return { ...parsed, source: "lrc-sidecar" }
+    }
   } catch {
     // No sidecar, or unreadable. Embedded tags are the main path anyway.
   }
@@ -153,6 +173,11 @@ async function parseTrack(audioPath: string): Promise<Track> {
   const title = firstString(common.title) || titleFromPath(audioPath)
   const artist = firstString(common.artist, common.albumartist) || "Unknown Artist"
 
+  // Some containers report a bogus duration. A NaN here would travel over IPC
+  // and poison the sort comparator for the whole library.
+  const rawDuration = format.duration
+  const duration = typeof rawDuration === "number" && Number.isFinite(rawDuration) ? rawDuration : 0
+
   return {
     id,
     path: audioPath,
@@ -164,7 +189,7 @@ async function parseTrack(audioPath: string): Promise<Track> {
     discNo: common.disk?.no ?? null,
     year: common.year ?? null,
     genre: Array.isArray(common.genre) ? common.genre : common.genre ? [String(common.genre)] : [],
-    duration: format.duration ?? 0,
+    duration,
     bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : null,
     sampleRate: format.sampleRate ?? null,
     channels: format.numberOfChannels ?? null,
@@ -232,29 +257,33 @@ export async function scanLibrary(options: ScanOptions): Promise<ScanResult> {
   onProgress?.({ phase: "walking", found: 0, parsed: 0, total: 0 })
 
   // Drop folders nested inside another so the same file is never scanned twice.
-  const roots = [...new Set(folders.filter(Boolean).map((f) => path.normalize(f)))].sort(
+  const roots = [...new Set(folders.filter(Boolean).map((f) => path.resolve(f)))].sort(
     (a, b) => a.length - b.length,
   )
   const minimalRoots = roots.filter(
     (dir, index) => !roots.slice(0, index).some((parent) => isInside(dir, parent)),
   )
 
-  // The audio protocol refuses anything outside these roots, so it must know
-  // the same set the scan walked.
-  setAudioRoots(minimalRoots)
-
   const discovered: string[] = []
+  const reachable: string[] = []
   for (const root of minimalRoots) {
     try {
       await fs.access(root)
     } catch {
+      // A root that is not currently present is skipped, and deliberately kept
+      // out of the audio jail so an unplugged drive does not stay readable.
       continue
     }
+    reachable.push(root)
     const files = await walkAudioFiles(root, extensions, (found) => {
       onProgress?.({ phase: "walking", found, parsed: 0, total: 0 })
     })
     discovered.push(...files)
   }
+
+  // The jail is populated only from folders that actually responded, and before
+  // any cover is published, so it is never wider than the library on screen.
+  setAudioRoots(reachable)
 
   const uniqueFiles = [...new Set(discovered)]
   const total = uniqueFiles.length
@@ -286,7 +315,7 @@ export async function scanLibrary(options: ScanOptions): Promise<ScanResult> {
 
   onProgress?.({ phase: "done", found: total, parsed, total })
 
-  return { tracks, failed, scannedFolders: minimalRoots, durationMs: Date.now() - started }
+  return { tracks, failed, scannedFolders: reachable, durationMs: Date.now() - started }
 }
 
 function describeError(err: unknown): string {
@@ -302,6 +331,6 @@ function describeError(err: unknown): string {
 }
 
 function isInside(child: string, parent: string): boolean {
-  const rel = path.relative(parent, child)
+  const rel = path.relative(parent.toLowerCase(), child.toLowerCase())
   return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel)
 }

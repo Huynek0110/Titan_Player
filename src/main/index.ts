@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, nativeTheme } from "electron"
 import path from "node:path"
+import fs from "node:fs"
 import { fileURLToPath } from "node:url"
 import { scanLibrary, windowsMusicFolder } from "./library.js"
-import { registerMediaScheme, handleMediaProtocol } from "./protocol.js"
+import { registerMediaScheme, handleMediaProtocol, pruneCovers } from "./protocol.js"
 import {
   createPlaylist,
   deletePlaylist,
@@ -16,9 +17,31 @@ import {
   updatePlaylist,
   updateSettings,
 } from "./store.js"
-import type { LibrarySettings, ScanProgress } from "../shared/types.js"
+import type { LibrarySettings } from "../shared/types.js"
 
 const __dirname_ = path.dirname(fileURLToPath(import.meta.url))
+
+/**
+ * Locate the built preload.
+ *
+ * electron-vite forces the `.mjs` extension for the preload when the output
+ * format is ES, which `"type": "module"` guarantees. Hard-coding one name here
+ * previously produced a silently blank window: the preload never loaded,
+ * `window.titan` stayed undefined, and the renderer threw on its first call.
+ * Probing both names, and failing loudly if neither exists, keeps that class of
+ * mistake impossible to ship again.
+ */
+function preloadPath(): string {
+  const base = path.join(__dirname_, "../preload/index")
+  for (const name of [".mjs", ".js", ".cjs"]) {
+    const candidate = `${base}${name}`
+    if (fs.existsSync(candidate)) return candidate
+  }
+  console.error(`[titan] preload not found. Looked for index.mjs/.js/.cjs next to ${base}`)
+  // Still hand back a path. Electron will report the failure itself, which is
+  // a clearer diagnostic than a preload silently resolving to nothing.
+  return `${base}.mjs`
+}
 
 // The scheme must be declared before the app becomes ready.
 registerMediaScheme()
@@ -48,7 +71,7 @@ function createWindow(): BrowserWindow {
       height: 44,
     },
     webPreferences: {
-      preload: path.join(__dirname_, "../preload/index.js"),
+      preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -78,22 +101,61 @@ function createWindow(): BrowserWindow {
 }
 
 function registerIpc(): void {
+  let scanInFlight = false
+
   ipcMain.handle("library:scan", async (_event, folders: string[], extensions: string[]) => {
-    const settings = getSettings()
-    const targets = [...(folders ?? [])]
-    if (settings.useSystemMusicFolder) {
-      const music = windowsMusicFolder()
-      if (!targets.includes(music)) targets.push(music)
+    // Concurrent scans would fight over the shared audio jail and cover map and
+    // interleave their progress events on one channel.
+    if (scanInFlight) throw new Error("A scan is already running")
+    scanInFlight = true
+
+    try {
+      const settings = getSettings()
+
+      // The renderer supplies a folder list, but the jail is the security
+      // boundary, so it is built from what the main process has on record
+      // rather than from renderer input. A compromised renderer therefore
+      // cannot widen the set of readable files by passing a different array.
+      const trusted = new Set(settings.musicFolders.map((f) => path.resolve(f).toLowerCase()))
+      const requested = (folders ?? [])
+        .map((f) => path.resolve(f).toLowerCase())
+        .filter((f) => trusted.has(f))
+
+      const targets = [...requested]
+      if (settings.useSystemMusicFolder) {
+        const music = windowsMusicFolder()
+        if (!targets.some((f) => f === path.resolve(music).toLowerCase())) targets.push(music)
+      }
+
+      let lastSent = 0
+      const result = await scanLibrary({
+        folders: targets,
+        extensions: extensions?.length ? extensions : settings.extensions,
+        onProgress: (progress) => {
+          // Throttle. Reporting every discovered file would mean tens of
+          // thousands of IPC messages carrying a full path each.
+          const now = Date.now()
+          const done = progress.phase === "done"
+          if (!done && now - lastSent < 80) return
+          lastSent = now
+          send("library:scan-progress", done ? { ...progress, currentFile: undefined } : progress)
+        },
+      })
+
+      // Only prune once we are confident the scan actually covered the library.
+      // An unplugged drive or a temporarily missing folder would otherwise
+      // silently and permanently erase every playlist and favourite.
+      if (result.tracks.length > 0) {
+        await prunePlaylists(new Set(result.tracks.map((t) => t.id)))
+        pruneCovers(new Set(result.tracks.map((t) => t.id)))
+      } else {
+        console.warn("[titan] scan returned no tracks; keeping playlists and favourites intact")
+      }
+
+      return result
+    } finally {
+      scanInFlight = false
     }
-
-    const result = await scanLibrary({
-      folders: targets,
-      extensions: extensions?.length ? extensions : settings.extensions,
-      onProgress: (progress: ScanProgress) => send("library:scan-progress", progress),
-    })
-
-    await prunePlaylists(new Set(result.tracks.map((t) => t.id)))
-    return result
   })
 
   ipcMain.handle("library:pick-folders", async () => {

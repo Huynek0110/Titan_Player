@@ -40,17 +40,27 @@ export interface ParsedLyrics {
   plain?: string
 }
 
+/** LRC's whole-file timing adjustment, in milliseconds. Positive means the
+ *  lyrics should appear *earlier*, which is the opposite of the intuitive sign. */
+function readOffset(source: string): number {
+  const match = source.match(/\[offset:\s*([+-]?\d+)\s*\]/i)
+  if (!match) return 0
+  const ms = Number(match[1])
+  return Number.isFinite(ms) ? ms : 0
+}
+
 /** Parse raw LRC text. Never throws; malformed input degrades to plain text. */
 export function parseLrc(raw: string): ParsedLyrics {
   const source = raw.replace(/\r\n?/g, "\n").replace(/\u0000/g, "")
   const lines: LyricLine[] = []
   const words: Word[] = []
+  const offset = readOffset(source)
   let sawTimestamp = false
 
   for (const rawLine of source.split("\n")) {
     const line = rawLine.trim()
     if (line.length === 0) continue
-    // Skip [ar:...], [ti:...], [offset:...] and other ID tags.
+    // [ar:...], [ti:...], [offset:...] and other ID tags carry no lyric.
     if (!LINE_TAG.test(line) && ID_TAG.test(line)) continue
 
     LINE_TAG.lastIndex = 0
@@ -58,7 +68,8 @@ export function parseLrc(raw: string): ParsedLyrics {
     let match: RegExpExecArray | null
     let consumed = 0
     while ((match = LINE_TAG.exec(line)) !== null) {
-      // Only accept tags that form a contiguous prefix of the line.
+      // Only accept tags forming a contiguous prefix; stop at the first
+      // non-timestamp character so a bracketed word mid-lyric is not eaten.
       if (match.index !== consumed) break
       consumed = match.index + match[0].length
       stamps.push(toSeconds(match[1], match[2], match[3]))
@@ -67,46 +78,72 @@ export function parseLrc(raw: string): ParsedLyrics {
     if (stamps.length === 0) continue
     sawTimestamp = true
 
+    // The body is whatever follows the *last* accepted stamp, not the first.
+    // Taking the first left a literal "[00:40.00]" visible in the rendered line
+    // whenever a line carried more than one timestamp.
     const body = line.slice(consumed).trim()
+    // Strip any further stray line-tags so they never reach the screen.
+    const text = body
+      .replace(LINE_TAG, "")
+      .replace(WORD_TAG, "")
+      .replace(/\s+/g, " ")
+      .trim()
 
-    // Word-level tags inside the body.
+    for (const start of stamps) {
+      lines.push({ time: start, text })
+    }
+
+    // Word-level timing, only meaningful when the body carries <...> tags.
     WORD_TAG.lastIndex = 0
     const parts: Word[] = []
     let cursor = 0
     let wm: RegExpExecArray | null
     while ((wm = WORD_TAG.exec(body)) !== null) {
       const between = body.slice(cursor, wm.index).trim()
+      const at = toSeconds(wm[1], wm[2], wm[3])
       if (between.length > 0) {
-        parts.push({ time: stamps[0] + Number(wm[1]) * 60 + Number(wm[2]), text: between })
+        // Text before the first <...> belongs to the line start; text after one
+        // belongs to that tag's own timestamp. Using the line start for both
+        // was the arithmetic error that made every word share one time.
+        parts.push({ time: parts.length === 0 ? stamps[0] : at, text: between })
       }
       cursor = wm.index + wm[0].length
     }
     const tail = body.slice(cursor).trim()
     if (tail.length > 0) {
-      const lastTag = body.match(WORD_TAG)
-      const base = lastTag ? toSeconds(lastTag[1], lastTag[2], lastTag[3]) : stamps[0]
-      parts.push({ time: base, text: tail })
+      const lastTag = lastWordTag(body)
+      parts.push({ time: lastTag ? lastTag.time : stamps[0], text: tail })
     }
-
-    if (parts.length > 0) {
-      for (const part of parts) words.push(part)
-    }
-
-    // Strip word tags for the plain line text, collapsing the extra spacing.
-    const text = body.replace(WORD_TAG, "").replace(/\s+/g, " ").trim()
-    for (const start of stamps) {
-      lines.push({ time: start, text })
-    }
+    for (const part of parts) words.push(part)
   }
-
-  lines.sort((a, b) => a.time - b.time)
-  words.sort((a, b) => a.time - b.time)
 
   if (!sawTimestamp) {
     return { lines: [], words: [], synced: false, plain: source.trim() }
   }
 
+  // Positive offset shifts lyrics earlier, so subtract it.
+  for (const line of lines) {
+    line.time = Math.max(0, line.time - offset / 1000)
+  }
+  for (const word of words) {
+    word.time = Math.max(0, word.time - offset / 1000)
+  }
+
+  lines.sort((a, b) => a.time - b.time)
+  words.sort((a, b) => a.time - b.time)
+
   return { lines, words, synced: true }
+}
+
+/** The last `<mm:ss.xx>` tag in a body, with its time already in seconds. */
+function lastWordTag(body: string): { time: number } | null {
+  let found: { time: number } | null = null
+  WORD_TAG.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = WORD_TAG.exec(body)) !== null) {
+    found = { time: toSeconds(m[1], m[2], m[3]) }
+  }
+  return found
 }
 
 /**
@@ -157,12 +194,19 @@ export function extractEmbeddedLyrics(tags: Record<string, unknown> | undefined)
   }
 }
 
-/** Merge two lyric sources, preferring whichever has line timing. */
+/**
+ * Merge two lyric sources, preferring whichever carries more information.
+ *
+ * Comparing `lines.length` alone was wrong: an unsynced source always has zero
+ * lines, so plain text embedded in the file would silently beat a richer
+ * sidecar file regardless of content. Fall back to text length when neither
+ * side is synced.
+ */
 export function preferSynced(a: Lyrics, b: Lyrics): Lyrics {
   if (a.synced && !b.synced) return a
   if (b.synced && !a.synced) return b
-  if (a.lines.length >= b.lines.length) return a
-  return b
+  if (a.synced && b.synced) return a.lines.length >= b.lines.length ? a : b
+  return (a.plain?.length ?? 0) >= (b.plain?.length ?? 0) ? a : b
 }
 
 /**
