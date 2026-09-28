@@ -5,7 +5,15 @@
   max-width: 300px;
   padding: 4px;
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-3);
+  /*
+   * The lift, and the rim. A menu on a dark interface with nothing but a shadow
+   * reads as a hole; the hairline is what makes it read as a pane of glass
+   * floating over the row it was opened from.
+   */
+  box-shadow:
+    var(--shadow-3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
   transform-origin: top left;
   animation: context-in 110ms var(--ease);
 }

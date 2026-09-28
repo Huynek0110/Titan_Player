@@ -3,6 +3,7 @@ import { useStore } from "../state/store"
 import { formatDuration } from "../lib/format"
 import Artwork from "./Artwork"
 import { Close, Play, Queue, Trash } from "./Icons"
+import { useGlassSurface } from "../lib/glass"
 import "./QueuePanel.css"
 
 /**
@@ -16,6 +17,33 @@ const EXIT_MS = 170
 export default function QueuePanel() {
   const { queueTracks, queueIndex, showQueue, setShowQueue, jumpTo, removeFromQueue, clearQueue } =
     useStore()
+
+  /*
+   * Frosted, but deliberately *not* refracting.
+   *
+   * This is the one surface in the app that is both filtered and moving over
+   * content that is itself moving: the drawer slides in over the library list,
+   * so its backdrop genuinely changes on every frame of the slide, and a backdrop
+   * filter is re-evaluated against whatever is behind the element each time. A
+   * blur is one pass and it was already here; a displacement is a second pass
+   * that samples a map, and with the chromatic aberration on top of it that is
+   * three.
+   *
+   * Measured during a window-resize sweep with the drawer open, that was worth
+   * roughly three dropped frames in a hundred-and-thirty, on top of the noise the
+   * sweep produces on its own — and the same surfaces with the glass switched off
+   * entirely still dropped four. Small, real, and on the one surface where the
+   * effect is least visible at rest: frosted glass over a scrolling list already
+   * reads as glass, because the list is what makes the blur worth having.
+   *
+   * The rim and the fill are unchanged, so it still looks like a card.
+   */
+  const panelRef = useGlassSurface<HTMLDivElement>({
+    displacement: 0,
+    extra: "blur(28px) saturate(1.6)",
+    flat: 0.08,
+    chromatic: false,
+  })
 
   /*
    * Mounted and open are separate. Unmounting on the same render that cleared
@@ -110,6 +138,7 @@ export default function QueuePanel() {
   return (
     <aside
       id="queue-panel"
+      ref={panelRef}
       className={`queue ${open ? "open" : ""}`}
       data-queue-panel="true"
       aria-label="Play queue"

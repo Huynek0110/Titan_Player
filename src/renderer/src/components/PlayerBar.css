@@ -35,6 +35,18 @@
   height: var(--player-h, 104px);
   padding: 0 18px;
   /*
+   * A floating card, inset from the window edges.
+   *
+   * This was a full-width strip with a top border. In the reference the player
+   * is a rounded card with the background visible on all four sides, and that is
+   * not a cosmetic difference — a surface that runs off both edges of the window
+   * has no rim on those edges, and the rim is what tells the eye it is looking at
+   * a pane of glass rather than at the bottom of a screen.
+   */
+  margin: 0 var(--sp-4) var(--sp-4);
+  border-radius: var(--r-card, 20px);
+  overflow: hidden;
+  /*
    * The refraction itself is written onto the element by `useGlassSurface`, which
    * has to generate an SVG displacement map sized to this exact box. The blur
    * here is a fallback for before that first frame lands and for the case where
@@ -42,22 +54,12 @@
    *
    * The background has to be translucent or the glass cannot be seen: a
    * `backdrop-filter` refracts what is behind the element, and an opaque
-   * background paints over exactly that. 0.62 rather than the 0.86 this used to
-   * be, because the refraction supplies the visual weight the opacity was
-   * carrying.
-   *
-   * Only this surface keeps a glass filter. It is the one panel that genuinely
-   * sits over scrolling content, so it is the one where there is something to
-   * refract. Four simultaneous full-height blurs used to re-blur every frame of
-   * a window resize, which is what made maximising stutter.
+   * background paints over exactly that.
    */
-  background: rgba(12, 12, 18, 0.62);
+  background: rgba(12, 12, 18, 0.24);
   backdrop-filter: blur(20px) saturate(1.6);
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
-  border-top: 1px solid rgba(255, 255, 255, 0.11);
-  /* A highlight along the top edge. Liquid Glass gets most of its read from the
-     way light catches a rim, and a hairline is the cheapest part of that. */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  box-shadow: var(--glass-rim);
 }
 
 /* --- left: now playing ------------------------------------------------- */

@@ -55,9 +55,25 @@ export default function App() {
   useEffect(() => {
     if (!currentTrack) return
     let cancelled = false
-    void extractPalette(
-      currentTrack.hasArtwork ? window.titan.coverUrl(currentTrack.id, true) : null,
-    ).then((palette) => {
+    const art = currentTrack.hasArtwork ? window.titan.coverUrl(currentTrack.id, true) : null
+    /*
+     * The cover itself, as the blurred backdrop.
+     *
+     * This is what makes the glass read as glass. A `backdrop-filter` bends what
+     * is behind it, and a three-stop gradient has no features to bend — the
+     * displacement has nothing to act on and the refraction is invisible however
+     * strong it is. A photograph has edges, a subject and blotches, so the rim
+     * has something to distort. Everything else in the interface is glass *over*
+     * this.
+     *
+     * Set as a custom property rather than an inline style so the element that
+     * paints it can stay in the stylesheet, and so the mini window — which has
+     * its own document and deliberately does not run this effect — is unaffected.
+     * The `media://` URL is only readable because the custom scheme serves it
+     * with the CORS headers a canvas and a stylesheet both need.
+     */
+    document.documentElement.style.setProperty("--art", art ? `url("${art}")` : "none")
+    void extractPalette(art).then((palette) => {
       if (!cancelled) applyPalette(palette)
     })
     return () => {
@@ -278,6 +294,8 @@ export default function App() {
 
   return (
     <div className={`app ${nowPlayingOpen ? "np-open" : ""}`}>
+      {/* The blurred cover, then the tint over it. See `.ambient-art`. */}
+      <div className="ambient-art" aria-hidden="true" />
       <div className="ambient" aria-hidden="true" />
       <div className="grain" aria-hidden="true" />
 

@@ -24,10 +24,26 @@
   min-height: 0;
 }
 
+/*
+ * The body is where the floating cards live.
+ *
+ * The reference implementation this is taken from is not a set of panels butted
+ * against the window edges — it is a handful of rounded cards sitting *on* a
+ * blurred photograph, with the picture visible in the gaps between them. Those
+ * gaps are load-bearing rather than decorative: without them the glass surfaces
+ * have nothing behind them but other glass surfaces, the backdrop filter has
+ * nothing with features to refract, and the whole treatment collapses back into
+ * translucent rectangles on a flat background.
+ *
+ * So the shell is inset and the cards are separated here, and the individual
+ * surfaces take their own radii.
+ */
 .app-body {
   flex: 1;
   min-height: 0;
   display: flex;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-4) var(--sp-4);
 }
 
 .app-main {
@@ -37,6 +53,40 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /*
+   * The content card: a rounded, rimmed panel with a translucent fill and
+   * **no backdrop filter of its own**.
+   *
+   * That is deliberate, and it was measured rather than assumed. This is by far
+   * the largest surface in the window — the whole page — and adding a filter here
+   * on top of the three floating ones cost eight dropped frames during a window
+   * resize with the queue drawer open, against none with the glass switched off
+   * entirely. `scripts/probe-glass-perf.mjs` is the measurement.
+   *
+   * A backdrop filter is paid per frame against whatever is behind the element,
+   * so the cost scales with the area being filtered. The rule that comes out of
+   * that: the *page* is not glass, the things floating on the page are. The
+   * blurred cover is already behind this panel, so a fill and a rim read the same
+   * here and cost nothing.
+   */
+  border-radius: var(--r-card, 20px);
+  overflow: hidden;
+  /*
+   * Nearly clear.
+   *
+   * This was 0.46 and it is the single reason the app did not look like the
+   * reference: a photograph behind a 46% black panel is at 54% of its own
+   * brightness, and behind the scrim it was under 20%, which is indistinguishable
+   * from no photograph at all. The reference's panels are close to clear — you
+   * can read the shape of the figure straight through its track list — and all
+   * the separation comes from the rim and the blur.
+   *
+   * 0.16 is low enough to see the picture and high enough to keep 11px track
+   * titles legible over a bright region of it. Legibility is bought with the
+   * scrim over the photograph and the grain, not with an opaque panel.
+   */
+  background: rgba(10, 10, 16, 0.16);
+  box-shadow: var(--glass-rim);
 }
 
 /*

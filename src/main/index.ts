@@ -88,7 +88,31 @@ function createWindow(): BrowserWindow {
     },
   })
 
-  window.once("ready-to-show", () => window.show())
+  /*
+   * Showing the window, with three paths to it.
+   *
+   * `show: false` plus a single `ready-to-show` listener is the usual way to do
+   * this, and it is fragile: if the event fires before the listener is attached,
+   * or is missed because the first paint was slow, the window never appears at
+   * all. The process stays alive, the renderer keeps running and answering the
+   * debugging protocol, and there is simply nothing on screen — which is
+   * indistinguishable from a crash from the outside, and was the hardest thing to
+   * diagnose in a whole session of it.
+   *
+   * So the first path is still the preferred one (it shows the window at the
+   * right moment, after the first paint, so there is no white flash), and the
+   * others are the safety net. `did-finish-load` fires later and unconditionally.
+   * The timer is last: it will show a window that is not ready, but a window that
+   * appears slightly wrong beats one that never appears, and by the time a
+   * four-second timer is relevant something else has already gone wrong.
+   */
+  const showWindow = () => {
+    if (!window.isDestroyed() && !window.isVisible()) window.show()
+  }
+  window.once("ready-to-show", showWindow)
+  window.webContents.once("did-finish-load", showWindow)
+  const showFallback = setTimeout(showWindow, 4000)
+  window.once("closed", () => clearTimeout(showFallback))
 
   /*
    * The bar outlives nothing, and the app has to go down with this window.

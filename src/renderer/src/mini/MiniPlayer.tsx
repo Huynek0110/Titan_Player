@@ -64,7 +64,11 @@ export default function MiniPlayer() {
    * real where an opaque surface sits behind the glass, which is the pill on top
    * of the panel. That is where it is applied.
    */
-  const pillRef = useGlassSurface<HTMLDivElement>({ displacement: 34, blur: 2, flat: 0.22 })
+  const pillRef = useGlassSurface<HTMLDivElement>({
+    displacement: 34,
+    extra: "blur(2px)",
+    flat: 0.22,
+  })
 
   useEffect(() => {
     return window.titanMini.onState((next) => {

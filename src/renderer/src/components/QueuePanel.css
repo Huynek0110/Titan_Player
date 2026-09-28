@@ -26,13 +26,27 @@
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid var(--line-2);
-  /* Dark enough to read type against, transparent enough that the blur shows.
-     The library scrolling behind is the only thing worth blurring here, and a
-     340px column costs a fraction of what a full-window backdrop does. */
-  background: rgba(14, 14, 22, 0.72);
+  /*
+   * Liquid Glass. The refraction is written on by `useGlassSurface`, which
+   * generates a displacement map sized to this exact box; the blur here is the
+   * fallback for the frame before that lands.
+   *
+   * Dark enough to read type against, transparent enough that the refraction
+   * shows. The library scrolling behind is the only thing worth refracting here,
+   * and a 340px column costs a fraction of what a full-window backdrop does.
+   */
+  background: rgba(14, 14, 22, 0.6);
   backdrop-filter: blur(28px) saturate(1.6);
   -webkit-backdrop-filter: blur(28px) saturate(1.6);
-  box-shadow: -20px 0 60px rgba(0, 0, 0, 0.45);
+  /*
+   * The rim on the leading edge, where light would catch a real pane of glass.
+   * The wide shadow is what lifts the drawer off the list behind it.
+   */
+  box-shadow:
+    -20px 0 60px rgba(0, 0, 0, 0.45),
+    inset 1px 0 0 rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 
   /* Closed state. The transform comes from the right, which is the edge the
      panel is attached to. */

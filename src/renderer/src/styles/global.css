@@ -457,6 +457,32 @@
   --slow: 420ms;
 
   /* ---------------------------------------------------------------- *
+   * The pop.
+   *
+   * `cubic-bezier(0.3, 2.25, 0.32, 1)` over 280ms, for a hover scale.
+   * Taken from Liquify's `user.css`, where it is the transition on every
+   * interactive card and row.
+   *
+   * The second control point is 2.25, which is far past 1 and therefore means
+   * the value overshoots its target on the way there. That is the entire
+   * effect: an element that grows past where it is going and settles back is
+   * read as *lifting*, and one that eases to exactly the right size is read as
+   * a cross-fade between two sizes. The app already had an overshoot curve for
+   * the lyrics -- `cubic-bezier(.34, 1.3, .4, 1)` -- and this is the same idea
+   * pushed further, because a card has more room to overshoot than a line of
+   * text does.
+   *
+   * The scale is chosen per element rather than globally, and the rule is that
+   * it goes *down* as the element gets bigger: 1.03 for a card, 1.1 for a small
+   * icon. A 10% growth on a full-width row is 144px of overflow past a container
+   * with `overflow: hidden`, and it clips.
+   * ---------------------------------------------------------------- */
+  --pop: cubic-bezier(0.3, 2.25, 0.32, 1);
+  --pop-ms: 280ms;
+  --pop-card: 1.03;
+  --pop-icon: 1.1;
+
+  /* ---------------------------------------------------------------- *
    * Grain.
    *
    * Exposed as a token so a component that paints its own large flat
@@ -511,25 +537,138 @@ body {
 }
 
 /*
- * The ambient wash that follows the artwork. Fixed, so it never scrolls
- * away.
+ * The blurred cover, as the backdrop everything else is glass *over*.
  *
- * Performance note, learned the hard way: this was originally a
- * full-viewport `filter: blur(60px)` layer with a continuously running
- * transform animation. Every window resize forced a repaint of a very
- * large blurred surface, which made maximising the window stutter badly.
- * The gradient is now unfiltered and static, and the softness comes from
- * the gradient stops themselves, so the layer composites for free. Only
- * opacity and transform are ever animated here, and in fact neither is:
- * an `ambient-drift` keyframe and a `will-change: opacity` on this layer
- * used to exist for a property nothing ever changed, which kept a
- * full-viewport texture resident — tens of megabytes on a 4K display —
- * and forced a re-raster on every resize for no benefit. Both are gone.
+ * This is the change that makes the rest of the treatment read as glass rather
+ * than as translucent panels on a flat gradient. A `backdrop-filter` bends what
+ * is behind it, and a soft three-stop gradient has no features to bend — the
+ * displacement has nothing to act on and the rim reads as nothing at all. A
+ * photograph has edges, blotches and a subject, so the refraction shows.
+ *
+ * The blur is done the cheap way, and the comment is long because the obvious
+ * version is a trap. `filter: blur(60px)` on a full-viewport layer is what this
+ * used to be, and it is a large rasterised surface that is re-blurred whenever
+ * its box changes — which on a window resize means every frame. Maximising
+ * juddered because of it.
+ *
+ * So the blur happens on a small element and the result is scaled up:
+ *
+ *     transform: scale(14)  on a 120x120 element
+ *
+ * 120px of blur rasterises once, and the scale is a compositor transform that
+ * costs nothing and re-rasterises nothing. The visible result is a 60px-equivalent
+ * blur, computed on 1/200th of the pixels. The scale is deliberately larger than
+ * the geometry needs so the scaled-up box always covers the viewport however far
+ * it is resized — if it did not, the edge of the blur would come into view and the
+ * backdrop would end in a straight line.
+ *
+ * The dark scrim over the top is not decoration. Art at this scale is
+ * high-contrast and mid-toned, and white type on it is unreadable without one;
+ * this is why the reference interface's glass is so heavily tinted.
+ */
+.ambient-art {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ambient-art::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /*
+   * 420px, scaled up 7x to about 2940px so the box covers the viewport on any
+   * display the app is likely to be opened on.
+   *
+   * The size is the whole point and it was badly wrong at first. This started at
+   * 120px scaled 14x, which looks equivalent and is not: `background-size: cover`
+   * crops a 1280px cover down to a 120px box, so only 9% of the picture was ever
+   * in frame, blown up 14 times. The result was a flat field of one colour — which
+   * is why the backdrop read as black and the refraction had nothing to bend. A
+   * backdrop has to show enough of the photograph to be recognisable as one.
+   *
+   * The cost is the base element's area, not the scaled size: 420x420 is a fifth
+   * of a full-viewport blur, rasterised once into a layer that is then only ever
+   * scaled and composited. That is the trade the reference makes too, at
+   * `blur 7` on a full-size image — this gets a comparable result for a fifth of
+   * the work and, unlike a full-viewport `filter`, does not re-rasterise on every
+   * resize of the window.
+   */
+  width: 420px;
+  height: 420px;
+  transform: translate(-50%, -50%) scale(7);
+  background-image: var(--art, none);
+  background-size: cover;
+  background-position: center;
+  /*
+   * Blurred, desaturated and dimmed to 45%.
+   *
+   * The blur and the scale together have to land on something like the reference's
+   * 21px-equivalent, which is why 21 here and not 6: the filter applies *before*
+   * the transform, so its radius is in base-element pixels and is multiplied by
+   * the 7x scale along with everything else.
+   *
+   * `saturate(0.75)` and `brightness(0.5)` are what stop the cover from fighting
+   * the interface. A full-saturation photograph behind glass is loud, and every
+   * colour in it competes with the accent for the eye; desaturating it keeps the
+   * hue and drops the shout, which is the difference between a backdrop and a
+   * second foreground.
+   */
+  filter: blur(21px) saturate(0.85) brightness(0.66);
+}
+
+.ambient-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /*
+   * Barely anything.
+   *
+   * The scrim exists to keep white type readable over a photograph, and with the
+   * picture already at 45% brightness and the panels themselves sitting at
+   * around 0.2, there is very little left to do. An earlier version of this was
+   * 0.34 to 0.66 of black on top of that, which is roughly a second full scrim
+   * and is what flattened the whole thing: the backdrop ended up at a few percent
+   * of its own brightness, so the glass had nothing behind it and no displacement
+   * strength could have fixed it.
+   *
+   * It is stronger at the bottom, where the player bar and the densest rows of
+   * text are, and almost absent at the top.
+   */
+  background: linear-gradient(
+    180deg,
+    rgba(6, 6, 10, 0.06) 0%,
+    rgba(6, 6, 10, 0.1) 45%,
+    rgba(4, 4, 7, 0.22) 100%
+  );
+}
+
+/*
+ * The ambient wash that follows the artwork. Fixed, so it never scrolls away.
+ *
+ * Sits above the cover, and is now a *tint* rather than the backdrop itself: with
+ * a photograph underneath, these three stops are what keep the hue consistent
+ * across the window instead of leaving whole regions at whatever the cover
+ * happened to be doing there.
+ *
+ * Performance note, learned the hard way: this was originally a full-viewport
+ * `filter: blur(60px)` layer with a continuously running transform animation.
+ * Every window resize forced a repaint of a very large blurred surface, which
+ * made maximising the window stutter badly. The gradient is unfiltered and
+ * static, so the softness comes from the gradient stops themselves and the layer
+ * composites for free. Only opacity and transform are ever animated here, and in
+ * fact neither is: an `ambient-drift` keyframe and a `will-change: opacity` on
+ * this layer used to exist for a property nothing ever changed, which kept a
+ * full-viewport texture resident — tens of megabytes on a 4K display — and
+ * forced a re-raster on every resize for no benefit. Both are gone.
  */
 .ambient {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
   background:
     radial-gradient(78% 52% at 16% 0%, var(--amb-1) 0%, transparent 68%),
@@ -705,12 +844,60 @@ input {
  * would let the text underneath show through the panel. The border is
  * what defines the edge where the blur cannot. Keep the blur static — it
  * is declared once and never transitioned.
+ *
+ * The refraction is not here, and that is deliberate. It cannot be: a
+ * displacement map has to be generated for one element at one size, so it
+ * arrives through `useGlassSurface` in `lib/glass.ts` rather than as a
+ * class. What this rule owns is the shared *material* — the fill, the
+ * blur, the saturation and the rim — so a surface that has been given a
+ * refraction still looks like the same material as one that has not.
+ *
+ * The 0.72 fill was what this started at and it is now on the surface
+ * rather than here, because the surfaces disagree: a 400px control strip
+ * and a full-height rail want visibly different opacities to read as the
+ * same glass at their sizes. A single value was a compromise that looked
+ * wrong at both ends.
  */
 .glass {
-  background: rgba(18, 18, 28, 0.72);
+  background: rgba(18, 18, 28, 0.68);
   backdrop-filter: blur(28px) saturate(1.6);
   -webkit-backdrop-filter: blur(28px) saturate(1.6);
   border: 1px solid var(--line-1);
+  /*
+   * The rim, on the shared class so every surface that opts into glass gets the
+   * same one. It is defined below in `:root`, which is later in the file, so this
+   * resolves at computed-value time rather than at parse time — the order does
+   * not matter for custom properties.
+   */
+  box-shadow: var(--glass-rim);
+}
+
+/*
+ * The rim, and it is the single most important value in the whole treatment.
+ *
+ * Taken from `--liquify-shadow` in Liquify's `user.css`, and it is a three-layer
+ * *inset shadow* rather than a border for two reasons. A border sits on the
+ * outside edge and reads as an outline drawn round a shape; an inset shadow sits
+ * on the inside and reads as light catching the inside of a material. And the
+ * asymmetry is the point — a bright top edge over a faint bottom one is what the
+ * eye reads as a pane of glass with a light above it, where a uniform hairline
+ * reads as a rectangle.
+ *
+ * The top layer's alpha is 0.55, which is far higher than instinct suggests and
+ * is not a typo. Everything else here is a subtle effect on a dark background, and
+ * this is the one line that makes a surface legible as a surface at all.
+ *
+ * The other half of the reference's treatment: glass targets there are
+ * `background: transparent`. The refraction *is* the material, and a translucent
+ * fill painted on top of it flattens the result into frosted plastic. The fills
+ * that remain in this app are the scrim that keeps white type readable over a
+ * photograph, and nothing more.
+ */
+:root {
+  --glass-rim:
+    inset 0 1px 1px rgb(255 255 255 / 0.5),
+    inset 0 -1px 1px rgb(255 255 255 / 0.12),
+    inset 0 0 0 1px rgb(255 255 255 / 0.06);
 }
 
 .truncate {

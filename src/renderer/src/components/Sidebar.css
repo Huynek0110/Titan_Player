@@ -5,15 +5,33 @@
   flex-direction: column;
   width: var(--sidebar-w);
   flex-shrink: 0;
-  border-right: 1px solid var(--line-1);
   /*
-   * No backdrop-filter here. A full-height blur behind the navigation meant a
-   * second large Gaussian pass on every frame of a window resize, which is what
-   * made maximising stutter. The ambient wash behind it is already soft, so a
-   * translucent flat fill is visually equivalent and free. The sidebar is also
-   * very slightly darker than the content: chrome should recede.
+   * A card, not a rail. This used to be a full-height panel butted against the
+   * left edge with a 1px divider, which is the one layout the reference does not
+   * use: with no gap at the left and no radius, there is no picture beside the
+   * glass and the refraction has nothing to act on.
    */
-  background: rgba(7, 7, 12, 0.82);
+  border-radius: var(--r-card, 20px);
+  overflow: hidden;
+  /*
+   * Liquid Glass. The refraction itself is written on by `useGlassSurface`, which
+   * has to generate a displacement map sized to this exact box; the blur here is
+   * the fallback for the frame before that lands.
+   *
+   * The fill is the scrim that keeps white type readable over a photograph, and
+   * nothing more — the reference implementation leaves its glass targets
+   * `background: transparent`, because a fill painted on top of a refraction
+   * flattens it back into frosted plastic.
+   *
+   * The rim is what actually makes this read as a pane of glass rather than as a
+   * dark rectangle, and it is the three-layer inset shadow from Liquify's
+   * `user.css` rather than a border. See `--glass-rim` in `global.css` for why
+   * the asymmetry matters and why the top edge is as bright as it is.
+   */
+  background: rgba(7, 7, 12, 0.18);
+  backdrop-filter: blur(14px) saturate(1.5);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  box-shadow: var(--glass-rim);
   /*
    * `--danger` and `--danger-strong` now live in global.css, because "this
    * destroys something" has to look the same in every corner of the app. They

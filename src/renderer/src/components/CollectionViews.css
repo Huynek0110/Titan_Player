@@ -25,7 +25,16 @@
   /* Vertical gap is small because `.card` carries 20px of top padding to make
      room for its own clipped drop shadow. Together they come to 26px. */
   gap: 6px 18px;
-  padding: 8px 24px 28px;
+  /*
+   * The horizontal padding is not spacing, it is headroom.
+   *
+   * A hovered card scales 3% about its centre, so it grows past its own cell in
+   * every direction — about 5px on a 168px tile. The grid clips at its padding
+   * box, so without room on both sides the first and last columns grow into the
+   * scrollbar and the window edge, and the lift is only visible in the middle of
+   * the grid where there happens to be a gap.
+   */
+  padding: 8px 30px 28px;
   overflow-y: auto;
   min-height: 0;
   flex: 1;
@@ -37,6 +46,20 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /*
+   * The hovered card has to paint above its neighbours. A grid places items by
+   * source order, so the last card in a row would otherwise grow *behind* the
+   * next row, and a card that slides under its neighbour while lifting looks
+   * like a clipping bug rather than a hover.
+   */
+  position: relative;
+  z-index: 0;
+  transition: z-index 0s;
+}
+
+.card:has(.card-hit:hover) {
+  z-index: 2;
+}
   /*
    * Second layer of protection for a large library. A grid is not windowed the
    * way the track list is, so on a machine with thousands of albums this is what
@@ -91,11 +114,48 @@
   min-width: 0;
   text-align: left;
   border-radius: var(--r-lg);
-  transition: background var(--mid) var(--ease);
+  /*
+   * The lift.
+   *
+   * The scale overshoots and settles — `--pop` has its second control point at
+   * 2.25 — so the card grows slightly *past* where it is going before coming
+   * back. That is the whole difference between this and an ordinary hover: an
+   * element that overshoots reads as picking itself up off the surface, and one
+   * that eases to exactly the right size reads as a cross-fade between two
+   * sizes. Taken from Liquify's `user.css`, where this is the transition on every
+   * card and row in the interface.
+   *
+   * `--pop-card` is 1.03 rather than the 1.1 used for small icons, because a card
+   * is large: 10% of a 200px tile is 20px of growth, which pushes it into its
+   * neighbours and, with `content-visibility` implying paint containment on the
+   * parent, gets the shadow sliced off. The scale goes *down* as the element gets
+   * bigger, and 1.03 is where this stops being visible.
+   *
+   * Transform only, so it stays on the compositor. The shadow is included because
+   * the card gets *further* from the surface as it grows, and a shadow that does
+   * not move makes the card look like a picture of something lifting rather than
+   * the thing itself.
+   */
+  transition:
+    transform var(--pop-ms) var(--pop),
+    box-shadow var(--pop-ms) var(--ease),
+    background var(--mid) var(--ease);
 }
 
 .card-hit:hover {
   background: rgba(255, 255, 255, 0.055);
+  transform: scale(var(--pop-card));
+  /* Lifted as well as scaled. Without it the card grows while staying flush with
+     the grid, which is the one thing that makes a scale read as a zoom rather
+     than as a lift. */
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.32);
+}
+
+.card-hit:active {
+  transform: scale(calc(var(--pop-card) - 0.02));
+  transition-duration: var(--fast);
 }
 
 /*

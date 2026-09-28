@@ -41,7 +41,12 @@ export default function PlayerBar({ player }: PlayerBarProps) {
    * surface that wide stops reading as glass and starts reading as a funhouse
    * mirror at the left and right ends.
    */
-  const barRef = useGlassSurface<HTMLElement>({ displacement: 26, blur: 3, flat: 0.4 })
+  const barRef = useGlassSurface<HTMLElement>({
+    displacement: 26,
+    chromatic: false,
+    extra: "blur(3px) saturate(1.6)",
+    flat: 0.4,
+  })
 
   /*
    * Whether the floating bar is on screen, tracked here because the button that

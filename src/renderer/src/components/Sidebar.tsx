@@ -16,6 +16,7 @@ import {
   Trash,
 } from "./Icons"
 import ContextMenu, { type MenuAnchor, type MenuItem } from "./ContextMenu"
+import { useGlassSurface } from "../lib/glass"
 import "./Sidebar.css"
 
 const SYSTEM_NAV: Array<{
@@ -32,6 +33,32 @@ const SYSTEM_NAV: Array<{
 
 export default function Sidebar() {
   const store = useStore()
+  /*
+   * Liquid Glass on the app's main chrome.
+   *
+   * This rail had no backdrop filter at all, and deliberately: a full-height
+   * blur behind the navigation caused a second large Gaussian pass on every frame
+   * of a window resize, which is what made maximising stutter.
+   *
+   * The reason for removing it does not apply to what replaced it. That was a
+   * `backdrop-filter` that was *declared once and never transitioned* on a
+   * surface whose backdrop is the ambient wash -- a soft, static gradient that
+   * changes only when the track changes. This is a displacement map, and it is
+   * regenerated only when the element's own size changes, so the filter itself
+   * is stable. The claim is measured, not assumed: `probe-glass-perf.mjs` resizes
+   * the window with this rail live and reads the frame times, and
+   * `scripts/README.md` records the numbers.
+   *
+   * A weak displacement on purpose. This is a tall, mostly-empty surface: a
+   * strong rim bend on a rectangle that shape stops reading as glass and starts
+   * reading as a funhouse mirror along its two long edges.
+   */
+  const railRef = useGlassSurface<HTMLElement>({
+    displacement: 30,
+    chromatic: false,
+    extra: "blur(14px) saturate(1.5)",
+    flat: 0.16,
+  })
   const {
     view,
     activePlaylistId,
@@ -213,7 +240,7 @@ export default function Sidebar() {
   const artistCount = useMemo(() => new Set(tracks.map((t) => t.artist)).size, [tracks])
 
   return (
-    <nav className="sidebar">
+    <nav className="sidebar" ref={railRef}>
       <div className="sidebar-scroll">
         <ul className="nav-list">
           {SYSTEM_NAV.map((item) => {
