@@ -1,17 +1,32 @@
+/*
+ * A centred column, but the scroll container stays full width. Scrolling was
+ * previously owned by this 760px box, which put the scrollbar at x=760 — floating
+ * in the middle of the window — and left a 760px column of content hugging the
+ * left edge of a 2560px display with 1800px of dead space beside it.
+ */
 .settings {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 30px 34px 48px;
-  max-width: 760px;
+  /*
+   * `--warn` now lives in global.css alongside the other status tokens. It used
+   * to be redeclared here, which meant a change to the real one would silently
+   * leave this screen behind.
+   */
+}
+
+.settings-inner {
+  max-width: 720px;
+  margin: 0 auto;
 }
 
 .settings-head h1 {
   margin: 0 0 6px;
   font-family: var(--font-display);
-  font-size: 34px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.1;
 }
 
 .settings-head p {
@@ -42,14 +57,118 @@
   color: var(--fg-2);
 }
 
+/*
+ * Neutral, not accented. `music-metadata` and `media://` are not interactive
+ * targets, so spending the one artwork-derived accent on them made the accent
+ * stop meaning "this is the current thing".
+ */
 .settings-note code,
 .ext-add code {
   padding: 1px 5px;
   border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 11.5px;
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--line-1);
+}
+
+/* --- inline notice ----------------------------------------------------- */
+
+.settings-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 11px 10px 11px 12px;
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-1);
+  background: rgba(255, 184, 77, 0.08);
+  border: 1px solid rgba(255, 184, 77, 0.26);
+}
+
+.settings-notice > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
+.settings-notice p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  user-select: text;
+  cursor: text;
+}
+
+.settings-notice button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  color: var(--fg-2);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.settings-notice button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg-0);
+}
+
+/* --- disclosure -------------------------------------------------------- */
+
+/*
+ * `<details>` draws a native marker that belongs to the OS, not to this
+ * window, and it sits inside a chrome that hides the title bar — so the one
+ * control that says "there is more here" is the one thing on screen that looks
+ * borrowed. The marker is suppressed and replaced with the app's own chevron.
+ */
+.settings-more {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-1);
+}
+
+.settings-more summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  list-style: none;
+  font-size: 12.5px;
+  font-weight: 580;
+  color: var(--fg-1);
+  cursor: pointer;
+  transition: color var(--fast) var(--ease);
+}
+
+.settings-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-more summary::marker {
+  content: "";
+}
+
+.settings-more summary:hover {
+  color: var(--fg-0);
+}
+
+/* Rotation only, so the disclosure animates without touching layout. */
+.disclosure {
+  flex-shrink: 0;
+  color: var(--fg-3);
+  transform: rotate(-90deg);
+  transition: transform var(--fast) var(--ease);
+}
+
+.settings-more[open] .disclosure {
+  transform: rotate(0deg);
 }
 
 /* --- toggle row -------------------------------------------------------- */
@@ -113,6 +232,19 @@
   transform: translateX(18px);
 }
 
+.toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/*
+ * The switch is wrapped in a clickable <label>, so disabling the button alone
+ * leaves the row advertising a pointer that does nothing.
+ */
+.settings-row:has(.toggle:disabled) {
+  cursor: not-allowed;
+}
+
 /* --- folder list ------------------------------------------------------- */
 
 .folder-list {
@@ -140,11 +272,21 @@
   color: var(--fg-3);
 }
 
-.folder-list li span {
+/*
+ * Plain LTR truncation. The RTL trick that used to be here was meant to keep
+ * the *start* of a long path visible, but it reorders the visual sequence of
+ * any mixed-script path — so a Vietnamese folder name followed by a file name
+ * rendered with its parts swapped, and the ellipsis landed on the drive letter
+ * instead of the leaf. Reading a path left to right and losing the tail is the
+ * lesser failure; `title` carries the full value for when it matters.
+ */
+.folder-list li .folder-path {
   flex: 1;
   min-width: 0;
-  direction: rtl;
-  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
 }
 
 .folder-empty {
@@ -163,46 +305,78 @@
 .settings-stats > div {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 
+/*
+ * 20px, and lighter than the page title. At 24px/780 these were within a hair
+ * of the 30px/700 `h1` above them, so three numbers in a row read as three more
+ * headings and the page had no top. A stat wants to be bigger than the body and
+ * unmistakable as data, not a second title.
+ */
 .stat-value {
   font-family: var(--font-display);
-  font-size: 24px;
-  font-weight: 780;
-  letter-spacing: -0.02em;
+  font-size: 20px;
+  font-weight: 660;
+  letter-spacing: -0.014em;
+  line-height: 1.2;
   color: var(--fg-0);
 }
 
 .stat-value.warn {
-  color: #ffb84d;
+  color: var(--warn);
 }
 
 .stat-label {
-  font-size: 11px;
-  letter-spacing: 0.05em;
+  font-size: 10.5px;
+  font-weight: 620;
+  letter-spacing: 0.075em;
   text-transform: uppercase;
+  /* --fg-2 rather than --fg-3. The label is the only thing explaining what the
+     number above it counts, and --fg-3 is documented as non-essential. */
+  color: var(--fg-2);
+}
+
+/* --- failed files ------------------------------------------------------ */
+
+.fail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 232px;
+  overflow-y: auto;
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.fail-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.fail-list li:last-child {
+  border-bottom: none;
+}
+
+.fail-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg-1);
+  user-select: text;
+  cursor: text;
+}
+
+.fail-reason {
+  font-size: 11px;
   color: var(--fg-3);
+  user-select: text;
+  cursor: text;
 }
 
 /* --- extensions -------------------------------------------------------- */
-
-.settings-more {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-1);
-}
-
-.settings-more summary {
-  font-size: 12.5px;
-  font-weight: 580;
-  color: var(--fg-1);
-  cursor: pointer;
-}
-
-.settings-more summary:hover {
-  color: var(--fg-0);
-}
 
 .ext-grid {
   display: flex;
@@ -213,23 +387,72 @@
 .ext-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
+  gap: 7px;
+  padding: 5px 11px 5px 9px;
   border-radius: var(--r-full);
   font-size: 12px;
   color: var(--fg-1);
   background: rgba(255, 255, 255, 0.055);
   cursor: pointer;
-  transition: background var(--fast) var(--ease);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
 }
 
 .ext-item:hover {
   background: rgba(255, 255, 255, 0.1);
+  color: var(--fg-0);
 }
 
+/*
+ * A real checkbox. `accent-color` left the control itself drawn by the OS inside
+ * a window that hides the title bar, so the one input on this screen was the one
+ * that did not match the pills, the toggle and the buttons around it. The tick
+ * scales in on `transform` rather than animating the box's geometry.
+ */
 .ext-item input {
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
   margin: 0;
+  border-radius: 4px;
+  border: 1px solid var(--line-3);
+  background: rgba(0, 0, 0, 0.34);
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+}
+
+.ext-item input:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ext-item input::after {
+  content: "";
+  width: 7px;
+  height: 3.5px;
+  border-left: 1.75px solid var(--accent-fg);
+  border-bottom: 1.75px solid var(--accent-fg);
+  transform: rotate(-45deg) scale(0.35);
+  transition: transform var(--fast) var(--ease);
+}
+
+.ext-item input:checked::after {
+  transform: rotate(-45deg) scale(1);
+}
+
+.ext-item:has(input:checked) {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ext-item input:focus-visible {
+  outline-offset: 1px;
 }
 
 .ext-add {
@@ -247,19 +470,58 @@
   border: 1px solid var(--line-2);
   border-radius: var(--r-full);
   outline: none;
+  transition: border-color var(--fast) var(--ease);
 }
 
 .ext-add input:focus {
   border-color: var(--accent);
 }
 
+/*
+ * The custom-extension warning is the only place this screen admits a limit it
+ * cannot fix: the scanner's allowlist here and the audio protocol's allowlist
+ * in `main/protocol.ts` are two separate lists, so a format added below is
+ * listed in the library and then refused at playback with a 403.
+ */
+.settings-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 9px 11px;
+  border-radius: var(--r-md);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fg-1);
+  background: rgba(255, 184, 77, 0.08);
+  border: 1px solid rgba(255, 184, 77, 0.24);
+}
+
+.settings-warn > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--warn);
+}
+
+.settings-warn span {
+  min-width: 0;
+}
+
+/* --- buttons ----------------------------------------------------------- */
+
 .settings .pill {
   padding: 7px 15px;
   font-size: 12.5px;
   color: var(--fg-0);
   background: rgba(255, 255, 255, 0.09);
+  transition: background var(--fast) var(--ease);
 }
 
-.settings .pill:hover {
+.settings .pill:not(:disabled):hover {
   background: rgba(255, 255, 255, 0.16);
+}
+
+.settings .pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

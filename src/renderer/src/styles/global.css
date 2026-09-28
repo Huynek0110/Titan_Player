@@ -1,71 +1,479 @@
 /* ------------------------------------------------------------------ *
  * Titan Player - design tokens
  *
- * The visual language: near-black canvas, one accent hue pulled from the
- * current artwork, generous radii, and a type scale with real contrast
- * between the display sizes and the utility sizes.
+ * Read this file before writing a component. Everything below is a
+ * decision somebody already made and a future contributor will otherwise
+ * make differently: the type scale and its line-heights, the weight
+ * ramp, the spacing ladder, the one horizontal gutter, which surfaces
+ * are allowed to carry the accent, and which properties are allowed to
+ * animate.
+ *
+ * The rule this sheet exists to enforce: a component may only use these
+ * tokens for type, spacing, motion and colour. A literal px in a
+ * component stylesheet is not a style choice, it is a fork of the design
+ * system, and the reason this interface looked assembled rather than
+ * art-directed is that there were twenty-two font sizes and sixty
+ * spacing values in it and nothing said which one to reach for.
  * ------------------------------------------------------------------ */
 
 :root {
-  /* Canvas */
-  --bg-0: #06060a;
+  /* ---------------------------------------------------------------- *
+   * Canvas
+   *
+   * Three steps, and that is the whole elevation system for opaque
+   * surfaces. Anything that needs to float gets a fill step instead
+   * (see --surface-* below) rather than a darker grey.
+   * ---------------------------------------------------------------- */
+
+  --bg-0: #06060a; /* the window itself */
+  /* A full-height pane: the sidebar and the queue. Both currently
+     hardcode their own alpha over this instead of using it, so the token
+     is the specification and their literals are the divergence. The
+     translucent form that matches what they actually want is
+     `color-mix(in oklab, var(--bg-1) 82%, transparent)`. */
   --bg-1: #0b0b12;
-  --bg-2: #12121c;
-  --bg-3: #1a1a27;
-  --bg-4: #232333;
+  --bg-2: #12121c; /* a control's own fill: text inputs */
 
-  /* Text */
+  /* ---------------------------------------------------------------- *
+   * Text ramp.
+   *
+   * Ratios are measured, not estimated, and they are quoted against the
+   * hardest surface each step is actually used on rather than against
+   * --bg-0, because a text colour that only passes on the bare canvas
+   * fails everywhere else. The hardest real surface in the app is a
+   * selected row (a 9% white fill over the canvas) at 15.5:1 / 10.1:1 /
+   * 6.2:1 / 4.3:1; the hardest is the lit top-left corner of the
+   * ambient wash, which reaches about 34% accent and drops --fg-2 to
+   * 4.6:1 and --fg-3 to 3.2:1. That is why --fg-3 is documented as
+   * unusable over the wash and why the chrome at the very top of the
+   * window (the title bar wordmark) uses --fg-2.
+   *
+   *   step   colour    on --bg-0   on a 9% row   on the lit corner
+   *   fg-0   #f4f4f7      18.4         15.5            11.5
+   *   fg-1   #c6c6d3      12.0         10.1             7.4
+   *   fg-2   #9a9aad       7.3          6.2             4.6
+   *   fg-3   #7e7e92       5.1          4.3             3.2
+   *   fg-4   #5c5c6d       3.1          2.6             1.9
+   *
+   * --fg-3 is the floor for anything that carries information: column
+   * headers, durations, counts, timestamps, captions. It clears 4.5:1
+   * (AA, normal text) on every opaque surface in the app, which the
+   * previous value at #6e6e80 did not — it sat at 4.05:1 and was
+   * therefore failing AA while carrying the track list's entire timing
+   * column. Small dim grey on near-black is the most reliable way to
+   * make a dark interface look cheap, because the text reads as dirt
+   * rather than as type.
+   *
+   * --fg-4 is NOT text. It is the 3:1 non-text floor, for scrollbar
+   * thumbs, row grips, disabled icons, drop markers and the empty-state
+   * glyph. If a value ever needs to be *read*, it belongs on --fg-3.
+   * ---------------------------------------------------------------- */
+
   --fg-0: #f4f4f7;
-  --fg-1: #b6b6c6;
-  --fg-2: #82829a;
-  --fg-3: #56566b;
+  --fg-1: #c6c6d3;
+  --fg-2: #9a9aad;
+  --fg-3: #7e7e92;
+  --fg-4: #5c5c6d;
 
-  /* Lines */
-  --line-1: rgba(255, 255, 255, 0.06);
-  --line-2: rgba(255, 255, 255, 0.11);
-  --line-3: rgba(255, 255, 255, 0.18);
+  /* ---------------------------------------------------------------- *
+   * Fill steps.
+   *
+   * These replace a dozen hand-written white alphas (0.045, 0.055,
+   * 0.06, 0.065, 0.07, 0.08, 0.09, 0.10, 0.12, 0.13, 0.14, 0.16)
+   * that were all trying to say "slightly more raised than the thing
+   * below it". Pick the step; do not invent an alpha.
+   * ---------------------------------------------------------------- */
 
-  /* Accent - overridden at runtime from artwork */
+  --surface-1: rgba(255, 255, 255, 0.035); /* a card resting on content */
+  --surface-2: rgba(255, 255, 255, 0.07); /* a chip, a resting control */
+  --surface-3: rgba(255, 255, 255, 0.12); /* hover */
+  --surface-4: rgba(255, 255, 255, 0.18); /* pressed, selected, drop target */
+  --scrim: rgba(6, 6, 10, 0.72); /* the backdrop behind a modal */
+
+  /* ---------------------------------------------------------------- *
+   * Lines — see the border/fill rule below before adding one.
+   * ---------------------------------------------------------------- */
+
+  --line-1: rgba(255, 255, 255, 0.06); /* a coplanar divider */
+  --line-2: rgba(255, 255, 255, 0.11); /* the edge of a raised surface */
+  --line-3: rgba(255, 255, 255, 0.18); /* a divider under hover or focus */
+
+  /* ---------------------------------------------------------------- *
+   * Accent.
+   *
+   * THE ACCENT IS SPENT ON EXACTLY THREE THINGS. Every other use of
+   * colour in this interface is --fg-0 through --fg-3. The accent is
+   * what the user can point at and say "that one is playing", and the
+   * moment it also decorates a toggle, a border, a slider, a link and a
+   * scrollbar it stops meaning anything — which is the single clearest
+   * difference between an interface that was designed and one that was
+   * assembled out of coloured parts.
+   *
+   *   1. The play/pause button. `.play-toggle` in the player bar and
+   *      `.play-big` on a page header. The most important action on
+   *      screen, and the only surface allowed to be filled with it.
+   *   2. The current-track indicator. The row/queue/lyric that is
+   *      playing right now: its leading bar, its title, its fill. One
+   *      per screen, because there is only one current track.
+   *   3. Focus rings, via :focus-visible below.
+   *
+   * And one thing that is explicitly NOT on the list: a toggle that is
+   * on. Shuffle, repeat, favourite and the queue panel all have a
+   * persistent engaged state that is independent of what is playing, and
+   * there are eight of them; if they take the accent too, a window with
+   * four of them lit has no way to say which track is the current one. A
+   * toggle reads as raised (see `.icon-btn.on`), not as coloured.
+   *
+   * Artwork colour is allowed to be pervasive in exactly one place, the
+   * ambient wash, and even there it is capped at --amb-1/--glow-1. The
+   * artwork supplies the colour; the interface stays near-neutral.
+   *
+   * These four are rewritten on documentElement by lib/palette.ts every
+   * time the playing track changes, and the ambient stops below with
+   * it. The values here are the *initial* values, not fallbacks in the
+   * CSS sense — nothing ever reverts to them — and they are chosen to
+   * match lib/palette.ts's FALLBACK exactly so the very first frame and
+   * the no-artwork case are the same picture rather than a visible
+   * step. That is also why --accent-soft is 0.18 and not 0.16: the
+   * extractor writes `${primary}2e` (0x2e = 46 = 18%), and a default of
+   * 16% made every --accent-soft surface brighten the instant the first
+   * track's art resolved.
+   * ---------------------------------------------------------------- */
+
   --accent: #7c5cff;
-  --accent-2: #22d3ee;
+  --accent-soft: rgba(124, 92, 255, 0.18);
   --accent-fg: #ffffff;
-  --accent-soft: rgba(124, 92, 255, 0.16);
 
-  /* Ambient wash driven by artwork, set as inline custom properties */
-  --amb-1: rgba(124, 92, 255, 0.3);
-  --amb-2: rgba(34, 211, 238, 0.16);
-  --amb-3: rgba(236, 72, 153, 0.12);
+  /* Ambient stops. Rewritten at runtime from the artwork, and the only
+     place its hue is allowed to spread. Restrained on purpose: cranking
+     these up turns the window into coloured fog, which is the generic
+     "AI dashboard" look rather than a music player.
 
-  /* Geometry */
+     These are the values for the FALLBACK purple, computed by the same
+     per-colour rule palette.ts applies at runtime. A fixed alpha cannot
+     serve arbitrary artwork — a desaturated violet and a saturated red at
+     the same 20% are not the same picture. */
+  --amb-1: rgba(124, 92, 255, 0.1);
+  --amb-2: rgba(34, 211, 238, 0.08);
+  --amb-3: rgba(236, 72, 153, 0.07);
+
+  /* A tighter bloom reserved for the hero artwork, where it reads as
+     light falling off an object rather than as a background tint. */
+  --glow-1: rgba(124, 92, 255, 0.24);
+  --glow-2: rgba(34, 211, 238, 0.18);
+
+  /* ---------------------------------------------------------------- *
+   * Status.
+   *
+   * Four reds and two ambers were hardcoded across six stylesheets
+   * (#ff6b6b, #ff8080, #ff9d9d, #ff5a5a, #d13438, #ffb84d) and three of
+   * them meant slightly different things. A destructive action is a hue,
+   * not a text step, and it is deliberately the one place in the app
+   * where a fixed colour appears on a surface the artwork is also
+   * colouring — a red cover should not be able to make "Delete playlist"
+   * ambiguous, which is why this is a *fixed* red and not --accent.
+   * ---------------------------------------------------------------- */
+
+  --danger: #ff8080; /* a destructive action, or a failure */
+  --danger-strong: #ff5a5a; /* the same thing under hover */
+  --warn: #ffb84d; /* something is wrong but nothing was destroyed */
+  --close: #d13438; /* the Windows close-button red, and only that */
+
+  /* ---------------------------------------------------------------- *
+   * Geometry
+   * ---------------------------------------------------------------- */
+
   --r-sm: 6px;
   --r-md: 10px;
   --r-lg: 16px;
   --r-xl: 24px;
   --r-full: 999px;
 
-  /* Elevation */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  /* Two shadows. A third, softer one existed and nothing used it. */
   --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-3: 0 24px 64px rgba(0, 0, 0, 0.55);
-  --glow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 40px rgba(0, 0, 0, 0.5);
 
-  /* Motion */
+  /* ---------------------------------------------------------------- *
+   * Type scale.
+   *
+   * Nine steps, paired with a line-height, because a font size without
+   * a line-height inherits a global 1.5 that is right for a paragraph
+   * and wrong for a 43px heading. Every step here carries the
+   * line-height it is meant to be read at; if you set a size from this
+   * list, set the matching --lh-*.
+   *
+   *   step   size  line   the role, and only that role
+   *   2xs    10px  1.40   uppercase, tracked, section and column labels
+   *   xs     11px  1.45   counts, durations, timestamps, track numbers
+   *   sm     12px  1.50   secondary cells: artist, album, folder, hints
+   *   md     13px  1.50   the body base: row titles, card titles, nav,
+   *                        menu items, empty-state copy
+   *   lg     15px  1.40   titles that need presence: player bar now
+   *                        playing, card and pane headings
+   *   xl     19px  1.35   artist credits and plain (unsynced) lyrics
+   *   d1     25px  1.30   sub-display: the active lyric, a stat value
+   *   d2     33px  1.10   the page heading: library, albums, artists,
+   *                        playlist, settings
+   *   d3     43px  1.05   display: the Now Playing track title. One use.
+   *
+   * The text range is deliberately tight (10/11/12/13) and the display
+   * range is a real ratio (25 → 33 → 43, about 1.31). A single modular
+   * ratio across nine steps either crushes the 10-13px band the user
+   * actually reads all day, or pushes the display sizes into a stadium
+   * where nothing fits. The two bands do different jobs and are scaled
+   * separately.
+   *
+   * There are no half-pixels. 10.5/11.5/12.5/13.5 existed because nobody
+   * picked a number, and at 100% DPI Chromium rounds a half-pixel size
+   * differently depending on where it lands, so the same declaration
+   * renders as 10px on one display and 11px on the next.
+   * ---------------------------------------------------------------- */
+
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fs-d1: 25px;
+  --fs-d2: 33px;
+  --fs-d3: 43px;
+
+  --lh-2xs: 1.4;
+  --lh-xs: 1.45;
+  --lh-sm: 1.5;
+  --lh-md: 1.5;
+  --lh-lg: 1.4;
+  --lh-xl: 1.35;
+  --lh-d1: 1.3;
+  --lh-d2: 1.1;
+  --lh-d3: 1.05;
+
+  /* ---------------------------------------------------------------- *
+   * Weights — four, and they are named rather than numbered because the
+   * number is not the information.
+   *
+   * Segoe UI Variable carries a real 100-900 axis on Windows 11, so all
+   * four steps are distinct there. Windows 10 has static Segoe UI at
+   * 400 and 700 only, and CSS font matching resolves 500 → 400 and
+   * 600 → 700, so on Win10 the ramp reads as two levels and on Win11 as
+   * four.
+   *
+   * That collapse is the reason the ramp is four steps and not the
+   * fifteen it was (450, 520, 550, 560, 580, 600, 620, 640, 650, 660,
+   * 680, 700, 780, 800, plus 780 again). Fifteen is not a hierarchy on
+   * either OS: on Win10 fourteen of them snap to 400 or 700 with no
+   * predictable rule, and on Win11 fifteen adjacent steps inside a band
+   * too narrow to resolve is noise, not gradation. Four steps
+   * communicate on both. A weight that is not one of these four is a
+   * bug, not a preference — if 600 is not emphatic enough, change what
+   * is emphasised, not the number.
+   * ---------------------------------------------------------------- */
+
+  --fw-body: 400; /* the default */
+  --fw-medium: 500; /* a small lift inside body copy: the artist under a title */
+  --fw-strong: 600; /* labels, nav items, card titles, eyebrows */
+  --fw-display: 700; /* headings and the active lyric, and nothing else */
+
+  /* ---------------------------------------------------------------- *
+   * Tracking — three values, not fifteen.
+   *
+   * These are calibrated for Segoe UI, which is what is actually being
+   * rasterised (see the font stack note below). Inter's canonical
+   * display tracking of -0.03 to -0.04em assumes Inter's much narrower
+   * default sidebearings; ported verbatim onto Segoe UI it over-tightens
+   * and the letter pairs collide — "Al", "Ta", "Vo" touch at 43px and
+   * the face loses the open, humanist character that is the only reason
+   * to use it over Helvetica. Segoe UI is already tight at display
+   * sizes, so it needs a fraction of what Inter needs, and the correct
+   * amount is what these say.
+   * ---------------------------------------------------------------- */
+
+  --track-eyebrow: 0.09em; /* uppercase labels; the mode of the six values it replaces */
+  --track-display-sm: -0.012em; /* d1, d2 */
+  --track-display: -0.02em; /* d3 */
+
+  /* Text below xl gets `normal`. A negative tracking value on a 13px row
+     title is not refinement, it is the display rule leaking upward. */
+
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+
+  /* ---------------------------------------------------------------- *
+   * Spacing — a 4px ladder with half-steps at 2 and 6.
+   *
+   *   --sp-1   2px   the tightest useful gap: a grip and its label, a
+   *                 two-line caption inside a row
+   *   --sp-2   4px   inside one control; a column of pills
+   *   --sp-3   6px   icon to its own label; padding on a 32px control
+   *   --sp-4   8px   inside a small container; gaps in a dense list
+   *   --sp-5  12px   padding on a small container; a row's own inset
+   *   --sp-6  16px   the default gap between related elements
+   *   --sp-7  20px   between groups; panel padding
+   *   --sp-8  24px   between sections; a card's padding
+   *   --sp-9  32px   a page's top padding; a large separation
+   *   --sp-10 40px   a page's bottom padding
+   *   --sp-11 48px   the tail of a scroll region
+   *
+   * There is no 10px step. 10, 14, 18, 22, 26, 30 and 34 were all in
+   * use, which is what a ladder without half-steps looks like from the
+   * outside. 10 → --sp-4 or --sp-5, 14 → --sp-5, 18 → --sp-7, 22 →
+   * --sp-7 or --sp-8, 26 → --sp-8, 30/34 → --sp-9.
+   * ---------------------------------------------------------------- */
+
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+  --sp-7: 20px;
+  --sp-8: 24px;
+  --sp-9: 32px;
+  --sp-10: 40px;
+  --sp-11: 48px;
+
+  /* ---------------------------------------------------------------- *
+   * The gutter.
+   *
+   * ONE horizontal inset for the content column, and the user's eye
+   * tracks that vertical line all day. It had seven: the library header
+   * 26, the playlist header 26, the track list header 24, the track list
+   * body an effective 22, the album grid 24, settings 34, Now Playing
+   * 52, the lyrics pane 8, the queue 8. Every switch between views moved
+   * the content sideways, which is the cheapest way to make a window feel
+   * like it is assembled from separate screens.
+   *
+   *   --gutter     24px  every page and every scroll region in the
+   *                       window: library, albums, artists, playlist,
+   *                       settings, track list header, track list body,
+   *                       album grid
+   *   --gutter-lg  40px  Now Playing only. It is a full-bleed hero, not
+   *                       a page in the window's grid, and it earns a
+   *                       wider frame. The lyrics column inside it takes
+   *                       the same value on its leading edge.
+   *
+   * The sidebar, the player bar and the queue are NOT pages. They are
+   * chrome, they have their own edge to align to, and they use
+   * --sp-* internally. Nothing in them uses the gutter.
+   *
+   * Aligning the track list is a two-token job, because a row carries its
+   * own 12px inset: the body scrolls at --sp-5 and the row pads at
+   * --sp-5, so the row's text lands at 24px — the same line as the
+   * header's padding. The old 10px + 12px produced 22px and the header
+   * compensated with a bespoke 24px padding-left, which is a note to
+   * self written in CSS.
+   * ---------------------------------------------------------------- */
+
+  --gutter: 24px;
+  --gutter-lg: 40px;
+
+  /* The page-header rhythm. Any view that opens with a heading block
+     inside .app-main uses these, so switching views does not jump the
+     content by 20px. The library header had 4px of top padding and the
+     playlist header 24px for the same region at the same role. */
+  --page-pad-t: 12px;
+  --page-pad-b: 20px;
+
+  /* ---------------------------------------------------------------- *
+   * Layout
+   * ---------------------------------------------------------------- */
+
+  --titlebar-h: 44px;
+  --sidebar-w: 264px;
+  --player-h: 104px; /* the token said 92px while the bar was 104px tall */
+
+  /*
+   * Control sizes.
+   *
+   * The app had icon buttons at 34, 28, 26, 24 and 22px and accent-filled
+   * circles at 38, 40, 44, 46 and 54px. Nothing about those numbers was a
+   * decision; they accumulated one component at a time. Two sizes: a square
+   * icon target, and the play/pause circle, which is the single most important
+   * control on screen and is allowed to be larger.
+   */
+  --icon-btn: 34px;
+  --play-btn: 46px;
+
+  /* ---------------------------------------------------------------- *
+   * Motion.
+   *
+   * ALLOWED
+   *   transform, opacity — the compositor owns these. They never touch
+   *   layout or paint, so they cannot stutter, and they are the only
+   *   two properties that are safe to drive from a requestAnimationFrame
+   *   loop (the seek bar's scaleX and the lyrics pane's --fill).
+   *   color, background-color, border-color, outline-color — paint, but
+   *   only the element's own box, at --fast, on something small. This
+   *   is the bulk of the app's motion and it is fine.
+   *
+   * FORBIDDEN — layout
+   *   width, height, top, left, right, bottom, margin, padding, inset,
+   *   flex, grid-template-*. Animating these re-runs layout for the
+   *   element's subtree. In this app almost every container is a flex or
+   *   grid column, so a width transition on a header control relaid out
+   *   the 40px heading next to it. The search field grew 216 → 268px on
+   *   focus and took the whole header row with it.
+   *
+   * FORBIDDEN — paint at scale
+   *   box-shadow, filter, backdrop-filter, background-image, mask, on
+   *   anything larger than a thumbnail, and never in a loop. These
+   *   rasterise on every frame. `backdrop-filter` is the worst case: it
+   *   re-reads and re-blurs everything behind the element, so a
+   *   full-window blur that is also transitioning its opacity costs a
+   *   fresh Gaussian pass per frame — which is exactly why the Now
+   *   Playing scrim has no backdrop-filter and why the player bar keeps
+   *   its blur static. Declaring backdrop-filter once and never
+   *   animating it is fine; that is what `.playerbar` and `.glass` do.
+   *
+   *   A one-shot filter transition on a small element is the exception
+   *   worth naming: `.artwork img` cross-fades `blur(7px) → none` once
+   *   per resolved image, on a thumbnail. That is allowed. The same
+   *   effect on a full-width row is not.
+   *
+   * DURATIONS
+   *   --fast  120ms  hover, colour, a button's own scale
+   *   --mid   220ms  a state change: selection, expansion, the queue
+   *   --slow  420ms  a hero: the cover transition, the lyric fill sweep
+   *
+   * EASING
+   *   --ease for everything, including all entrances and exits. One
+   *   curve, so everything in the window decelerates the same way and
+   *   the app feels like one object.
+   *   --ease-in-out is the single exception, for infinite looping
+   *   animations only — a pulsing opacity has to return to its start
+   *   value smoothly or the loop visibly snaps. Do not use it for
+   *   anything a user triggers.
+   * ---------------------------------------------------------------- */
+
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --fast: 120ms;
   --mid: 220ms;
   --slow: 420ms;
 
-  /* Layout */
-  --titlebar-h: 44px;
-  --sidebar-w: 264px;
-  --player-h: 92px;
+  /* ---------------------------------------------------------------- *
+   * Grain.
+   *
+   * Exposed as a token so a component that paints its own large flat
+   * scrim can compose the same texture into its own background stack
+   * rather than sitting under the shared layer and losing it.
+   *
+   * The cost question, settled: an feTurbulence data URI is rasterised
+   * once at the size of the SVG (a 100x100 tile) and then cached as an
+   * image and repeated by background-repeat. It is not re-evaluated per
+   * screen pixel, so a full-viewport layer is not a 4K filter. The three
+   * things that do matter are all fixed here: the tile is small, the
+   * octave count is 1 (it was 3, which is three times the filter work for
+   * detail nobody sees at 1.8% opacity), and baseFrequency is 0.6 rather
+   * than 0.85 — at 0.85 the base frequency sits at the Nyquist limit of
+   * the tile, so the noise aliased and shimmered as the window resized
+   * instead of reading as grain. Resizing the window re-tiles a cached
+   * image; it does not re-run the filter.
+   * ---------------------------------------------------------------- */
 
-  /* Type */
-  --font-ui: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
-    sans-serif;
-  --font-display: "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --grain-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.6' numOctaves='1' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100' height='100' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 * {
@@ -82,8 +490,14 @@ body,
 
 body {
   font-family: var(--font-ui);
-  font-size: 14px;
-  line-height: 1.5;
+  font-weight: var(--fw-body);
+  /* The body base is 13px, not 14px. Row titles and nav items are the
+     most-read text in the app and they sat at 13.5px; a 14px root made
+     every one of them a deliberate step *down* from the body, which is
+     backwards. Anything that does not pick a size from the scale
+     inherits this. */
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
   color: var(--fg-0);
   background: var(--bg-0);
   overflow: hidden;
@@ -93,41 +507,140 @@ body {
   cursor: default;
 }
 
-/* Ambient wash that follows the artwork. Fixed so it never scrolls away. */
+/*
+ * The ambient wash that follows the artwork. Fixed, so it never scrolls
+ * away.
+ *
+ * Performance note, learned the hard way: this was originally a
+ * full-viewport `filter: blur(60px)` layer with a continuously running
+ * transform animation. Every window resize forced a repaint of a very
+ * large blurred surface, which made maximising the window stutter badly.
+ * The gradient is now unfiltered and static, and the softness comes from
+ * the gradient stops themselves, so the layer composites for free. Only
+ * opacity and transform are ever animated here, and in fact neither is:
+ * an `ambient-drift` keyframe and a `will-change: opacity` on this layer
+ * used to exist for a property nothing ever changed, which kept a
+ * full-viewport texture resident — tens of megabytes on a 4K display —
+ * and forced a re-raster on every resize for no benefit. Both are gone.
+ */
 .ambient {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(120% 80% at 12% 0%, var(--amb-1) 0%, transparent 60%),
-    radial-gradient(100% 70% at 88% 8%, var(--amb-2) 0%, transparent 58%),
-    radial-gradient(90% 60% at 50% 100%, var(--amb-3) 0%, transparent 65%);
-  filter: blur(40px) saturate(1.3);
-  opacity: 0.9;
-  transition: opacity var(--slow) var(--ease);
-  will-change: opacity;
+    radial-gradient(78% 52% at 16% 0%, var(--amb-1) 0%, transparent 68%),
+    radial-gradient(62% 46% at 88% 8%, var(--amb-2) 0%, transparent 66%),
+    radial-gradient(72% 52% at 60% 100%, var(--amb-3) 0%, transparent 70%);
 }
 
+/* A soft bloom that sits behind the content, not under a blur. Two large
+   radial gradients read as out-of-focus light without any filter cost. */
+.ambient::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(38% 34% at 24% 16%, var(--glow-1) 0%, transparent 74%),
+    radial-gradient(34% 30% at 78% 30%, var(--glow-2) 0%, transparent 74%);
+  opacity: 0.5;
+}
+
+/* Darken the lower half so text over the wash stays legible, and stack
+   this ABOVE the bloom so the scrim is the topmost thing in the ambient
+   layer — a dark gradient painted under a bright one does nothing.
+
+   The top stop is 38% rather than 18%. The top of the window is where the
+   brightest wash sits and where the title bar and the page heading live, so it
+   is the region that most needs holding back and the one a shallow scrim
+   leaves completely exposed. The wash itself is also scaled per colour in
+   palette.ts, because a fixed alpha cannot serve both a desaturated violet
+   cover and a saturated red one. */
 .ambient::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(6, 6, 10, 0.25) 0%, rgba(6, 6, 10, 0.82) 70%);
+  background: linear-gradient(
+    180deg,
+    rgba(6, 6, 10, 0.38) 0%,
+    rgba(6, 6, 10, 0.62) 30%,
+    rgba(6, 6, 10, 0.78) 66%,
+    rgba(6, 6, 10, 0.93) 100%
+  );
 }
 
-/* Grain keeps the large flat gradients from banding. */
+/*
+ * Grain keeps the large flat gradients from banding, and it is here to
+ * do one job: sit on top of them.
+ *
+ * It used to be at z-index 1, under .app-shell at z-index 2, which meant
+ * the only place it was ever visible was the track list — the flattest,
+ * least gradient-heavy region in the window. Everywhere the gradient
+ * actually needed it, the app's own surfaces were painting over the top:
+ * the sidebar (an 82% fill), the player bar (an 86% fill plus a 20px
+ * backdrop blur, which smeared the noise into a soft blob), and the Now
+ * Playing scrim (94% black over the whole window).
+ *
+ * So it sits above all of that, at 45 — over the shell (2), the sidebar
+ * (10), the player bar (20), the queue (25) and the title bar (30), and
+ * under the overlays that own their own text: Now Playing (40), the boot
+ * screen (50), the fatal modal (60) and the context menu (901).
+ *
+ * On top of text at 1.8% it does not reduce legibility, and the reason
+ * is numeric rather than a matter of taste. Monochrome noise at 1.8%
+ * opacity moves relative luminance by under 1%, which is below the ~2%
+ * threshold at which a flat field reads as "noisy" at all, and every
+ * text token above clears 4.5:1 with better than 10% headroom — so no
+ * ratio in the ramp moves by a measurable amount. What it does do is
+ * stop a 34%-opaque full-window field from showing 8-bit banding on a
+ * wide-gamut display, which is the whole point of having it.
+ */
 .grain {
   position: fixed;
   inset: 0;
-  z-index: 1;
+  z-index: 45;
   pointer-events: none;
-  opacity: 0.022;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.018;
+  background-image: var(--grain-texture);
 }
 
 /* ---------------------------------------------------------------- *
+ * Borders versus surface elevation — one language, not both.
+ *
+ * A 1px white line at 6% over the near-black canvas is worth about 1.5%
+ * of luminance. That is visible, and it is enough to do real work — but
+ * only when it is the *only* mechanism. A card that pairs a 6% border
+ * with a 3.5% fill is a surface that was designed twice and reads as
+ * neither: the border looks like a mistake because there is nothing
+ * behind it to separate, and the fill looks too weak because the author
+ * thought the border was carrying the edge. That is the Settings card,
+ * and it is why the grouping there reads as noise.
+ *
+ * So each surface picks exactly one, chosen by what is on the other
+ * side of the boundary:
+ *
+ *   A FILL STEP when the surface floats ON something. Cards, menus,
+ *   modals, popovers, the queue, raised chips. There is nothing behind
+ *   it to draw a line against — the surface itself defines the boundary,
+ *   and a border on top of a fill is a second, redundant opinion about
+ *   the same edge. Use --surface-1 and no border.
+ *
+ *   A HAIRLINE when the boundary is between two COPLANAR things, or
+ *   where content scrolls under. A sticky header's bottom edge, the
+ *   sidebar's right edge, the queue's left edge, a divider between two
+ *   rows. The line is right because the two sides are at the same depth
+ *   and the only thing that distinguishes them is the edge itself.
+ *
+ * Never both. --line-1 for a coplanar divider, --line-2 for the edge of
+ * something raised that is also transparent, --line-3 for a divider
+ * under hover.
+ * ---------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------- *
  * Scrollbars
+ *
+ * The thumb is a non-text affordance, so it takes the --fg-4 floor
+ * (3:1) rather than a text step, and gets brighter on hover.
  * ---------------------------------------------------------------- */
 
 ::-webkit-scrollbar {
@@ -140,14 +653,14 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-3);
   border-radius: var(--r-full);
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--surface-4);
   background-clip: content-box;
 }
 
@@ -183,6 +696,13 @@ input {
   color: inherit;
 }
 
+/*
+ * Glass is the one place a fill and a border are both correct, and the
+ * reason is specific: it sits over *scrolling* content, so a fill alone
+ * would let the text underneath show through the panel. The border is
+ * what defines the edge where the blur cannot. Keep the blur static — it
+ * is declared once and never transitioned.
+ */
 .glass {
   background: rgba(18, 18, 28, 0.72);
   backdrop-filter: blur(28px) saturate(1.6);
@@ -190,13 +710,33 @@ input {
   border: 1px solid var(--line-1);
 }
 
-.hairline {
-  border-color: var(--line-1);
-}
-
 .truncate {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Numbers that change in place must not change width. Without this a duration
+ * ticking from 1:59 to 2:00 shoves the elements beside it sideways on every
+ * update, which is very visible in the player's time readouts.
+ */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Visible to a screen reader, not to the eye. Used for the control's real
+ * accessible name when the visible one is an icon or an abbreviation.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
@@ -220,7 +760,7 @@ input {
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-3);
   color: var(--fg-0);
 }
 
@@ -233,8 +773,26 @@ input {
   cursor: not-allowed;
 }
 
+/*
+ * An engaged toggle — shuffle, repeat, favourite, the queue panel.
+ *
+ * Deliberately NOT the accent, and this is the one place the accent
+ * policy above is load-bearing. There are eight of these in the app and
+ * they light up independently of what is playing, so the moment they
+ * carry the accent the hue stops answering "which track is this" and
+ * starts answering "is this on", and a window with shuffle on, repeat on,
+ * a favourited row and the queue open has four accent-coloured things
+ * and no way to tell which one is the current track.
+ *
+ * So a persistent state is expressed as elevation — a brighter fill and
+ * a brighter glyph — not as a hue. The icon still carries its own
+ * colour where it has one (a red heart is a red heart whether it is
+ * filled or not), which means the on/off read is the background, not
+ * the ink.
+ */
 .icon-btn.on {
-  color: var(--accent);
+  color: var(--fg-0);
+  background: var(--surface-3);
 }
 
 @media (prefers-reduced-motion: reduce) {

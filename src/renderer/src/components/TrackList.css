@@ -9,38 +9,42 @@
 .tracklist-head {
   display: grid;
   align-items: center;
-  gap: 12px;
-  height: 38px;
-  padding: 0 18px;
+  gap: 14px;
+  height: 40px;
+  /* 22px, matching the body's 10px plus the rows' own 12px, so the header grid
+     and the row grid are offset identically. The artwork cell used to be
+     absorbed into the title column, which put the label 53px to the left of the
+     titles it names, over the cover art. */
+  padding: 0 22px;
   border-bottom: 1px solid var(--line-1);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: linear-gradient(180deg, rgba(12, 12, 18, 0.9), rgba(12, 12, 18, 0.55));
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  flex: 0 0 40px;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .th {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
-  font-size: 11px;
-  font-weight: 620;
-  letter-spacing: 0.07em;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--fg-3);
   text-align: left;
   white-space: nowrap;
+  transition: color var(--fast) var(--ease);
 }
 
 .th.sortable:hover {
-  color: var(--fg-1);
+  color: var(--fg-0);
 }
 
 .th.right {
   justify-content: flex-end;
+  padding-right: 4px;
 }
 
 .tracklist-body {
@@ -48,48 +52,152 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 8px;
+  padding: 2px 10px 24px;
+  display: flex;
+  flex-direction: column;
+  /* Room between rows does the separating, so the gap can stay generous. */
+  gap: 2px;
   contain: strict;
 }
 
+/*
+ * Rows are separated by space and a barely-there wash, not by borders. A
+ * visible edge on every line turns a track list into a spreadsheet; the eye
+ * needs grouping, not a grid.
+ */
 .row {
   display: grid;
   align-items: center;
-  gap: 12px;
-  height: 52px;
-  padding: 0 10px;
-  border-radius: var(--r-md);
+  gap: 14px;
+  height: 58px;
+  /* Rows are a fixed height for the windowing maths, so they must not be
+     squashed by the flex column, and the spacers must not collapse either. */
+  flex: 0 0 58px;
+  padding: 0 12px;
+  border-radius: 12px;
   position: relative;
-  transition: background var(--fast) var(--ease);
+  background: transparent;
+  /*
+   * Deliberately no `content-visibility: auto` here, though it is the obvious
+   * second layer on top of the windowing. It applies paint containment, and
+   * paint containment clips descendants to the row's own box — which trims the
+   * artwork's 14px drop shadow to the 7px of space above the 44px cover. The
+   * windowing already caps the DOM at the viewport plus the overscan, so there
+   * is nothing left for it to save here.
+   */
+  transition:
+    background var(--mid) var(--ease),
+    opacity var(--fast) var(--ease),
+    transform var(--mid) var(--ease);
 }
 
 .row:hover {
-  background: rgba(255, 255, 255, 0.045);
+  background: rgba(255, 255, 255, 0.055);
+  transform: translateX(2px);
 }
 
 .row.selected {
-  background: rgba(124, 92, 255, 0.16);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/*
+ * A track the user has excluded from the library. It stays in the list until
+ * the store filters hidden ids out, so the state has to be visible on the row
+ * itself — otherwise the only feedback is that the row is dimmer than its
+ * neighbours.
+ */
+.row.is-hidden {
+  opacity: 0.5;
+}
+
+.row.is-hidden .row-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+
+.row.is-hidden:hover {
+  opacity: 0.75;
+}
+
+.row-hidden-chip {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line-2);
+  font-size: 9px;
+  font-weight: 660;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+/* The playing row is the one place the accent is spent in a list. */
+.row.current {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--accent) 20%, transparent),
+    rgba(255, 255, 255, 0.015) 70%
+  );
+}
+
+.row.current::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  box-shadow: 0 0 14px var(--accent);
 }
 
 .row.current .row-title {
   color: var(--accent);
-  font-weight: 600;
+  font-weight: 680;
+}
+
+/*
+ * A positioning wrapper only. The radius, the clip and the shadow all live on
+ * `.artwork` in Artwork.css, scaled from the size it publishes, because this
+ * hand-picked `0 4px 14px` was a third value in a set of five unrelated ones and
+ * it *stacked* with the base rather than replacing it.
+ */
+.row-art {
+  position: relative;
+  flex-shrink: 0;
 }
 
 .row.dragging {
   opacity: 0.4;
 }
 
-.row.drop-target::before {
+/*
+ * The insertion gap, drawn on the row's own edge so it needs no reflow.
+ *
+ * On `::after`, not `::before`: the playing-row accent bar already claims
+ * `::before`, and two rules setting `left`, `right`, `width` and `height` on one
+ * pseudo-element collapse into a 3px stub rather than a full-width rule.
+ */
+.row.drop-top::after,
+.row.drop-bottom::after {
   content: "";
   position: absolute;
   left: 8px;
   right: 8px;
-  top: -1px;
   height: 2px;
   border-radius: 2px;
   background: var(--accent);
   box-shadow: 0 0 10px var(--accent);
+  pointer-events: none;
+}
+
+.row.drop-top::after {
+  top: -1px;
+}
+
+.row.drop-bottom::after {
+  bottom: -1px;
 }
 
 .row-grip {
@@ -105,18 +213,6 @@
   opacity: 1;
 }
 
-.row-main {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  min-width: 0;
-}
-
-.row-art {
-  position: relative;
-  flex-shrink: 0;
-}
-
 .row-play {
   position: absolute;
   inset: 0;
@@ -130,7 +226,8 @@
 }
 
 .row:hover .row-play,
-.row.current .row-play {
+.row.current .row-play,
+.tracklist-simple .row-play {
   opacity: 1;
 }
 
@@ -140,15 +237,44 @@
 
 .row-text {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
+}
+
+.row-titleline {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+/* The number from the file's own tag, so the order the artist intended is
+   visible rather than inferred. */
+.row-no {
+  flex-shrink: 0;
+  min-width: 20px;
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 620;
+  color: var(--fg-3);
+  opacity: 0.75;
+}
+
+.row.current .row-no {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .row-title {
   font-size: 13.5px;
   font-weight: 520;
   color: var(--fg-0);
+}
+
+.row-sub {
+  font-size: 12px;
+  color: var(--fg-2);
 }
 
 .row-lyric-flag {
@@ -174,6 +300,7 @@
 }
 
 .row-actions {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -192,13 +319,26 @@
   height: 28px;
 }
 
+/*
+ * Out of flow, and pinned to a fixed distance from the right edge.
+ *
+ * In flow, the equaliser's width depended on whether it was rendered at all, so
+ * the favourite and ⋯ buttons beside it jumped sideways on every track change —
+ * the one place in the list where the eye is already tracking movement. The
+ * offset below is the two 28px buttons plus their 1px gap, so it has to move
+ * with ACTIONS_W in the TSX if the button size ever changes.
+ */
 .row-eq {
+  position: absolute;
+  right: 57px;
+  bottom: 50%;
   display: flex;
   align-items: flex-end;
   gap: 2px;
   height: 13px;
-  margin-right: 6px;
+  transform: translateY(50%);
   color: var(--accent);
+  pointer-events: none;
 }
 
 .row-eq i {
@@ -206,21 +346,24 @@
   width: 2.5px;
   border-radius: 2px;
   background: currentColor;
+}
+
+/* Only while something is actually playing. An infinite keyframe animation is
+   compositor work every frame forever, and a paused track does not deserve
+   any of it. */
+.row-eq.live i {
   animation: eq-bounce 900ms ease-in-out infinite;
 }
 
-.row-eq i:nth-child(1) {
-  height: 60%;
+.row-eq.live i:nth-child(1) {
   animation-delay: -240ms;
 }
 
-.row-eq i:nth-child(2) {
-  height: 100%;
+.row-eq.live i:nth-child(2) {
   animation-delay: -520ms;
 }
 
-.row-eq i:nth-child(3) {
-  height: 45%;
+.row-eq.live i:nth-child(3) {
   animation-delay: -80ms;
 }
 
@@ -234,19 +377,165 @@
   }
 }
 
+/* --- short lists --------------------------------------------------------- */
+
+.tracklist-compact {
+  overflow-y: auto;
+  padding: 4px 0 24px;
+}
+
+.tracklist-simple {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px 12px;
+}
+
+.simple-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 58px;
+  padding: 0 12px;
+  border-radius: 12px;
+  position: relative;
+  transition: background var(--mid) var(--ease);
+}
+
+.simple-row:hover {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.simple-row.selected {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.simple-row.is-hidden {
+  opacity: 0.5;
+}
+
+.simple-row.dragging {
+  opacity: 0.4;
+}
+
+.simple-row.current {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--accent) 20%, transparent),
+    rgba(255, 255, 255, 0.015) 70%
+  );
+}
+
+/* `::after` for the same reason as `.row`: `::before` is the playing-row accent
+   bar, and two rules fighting over one pseudo-element is how the drop indicator
+   used to end up a 3px stub. */
+.simple-row.drop-top::after,
+.simple-row.drop-bottom::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  pointer-events: none;
+}
+
+.simple-row.drop-top::after {
+  top: -1px;
+}
+
+.simple-row.drop-bottom::after {
+  bottom: -1px;
+}
+
+.simple-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.simple-row .row-actions {
+  position: static;
+  flex-shrink: 0;
+}
+
+/* --- empty states -------------------------------------------------------- */
+
 .tracklist-empty {
   flex: 1;
-  display: grid;
-  place-content: center;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 12px;
+  padding: 32px 40px;
+  text-align: center;
+}
+
+.tracklist-empty-mark {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 2px;
+  border-radius: var(--r-xl);
   color: var(--fg-3);
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px var(--line-1);
+}
+
+.tracklist-empty h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--fg-0);
 }
 
 .tracklist-empty p {
   margin: 0;
-  font-size: 13.5px;
+  max-width: 46ch;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--fg-2);
 }
+
+.tracklist-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 4px;
+}
+
+.tracklist-empty-actions .pill {
+  padding: 8px 16px;
+  font-size: 12.5px;
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line-1);
+}
+
+.tracklist-empty-actions .pill:hover {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.tracklist-empty-actions .pill.primary {
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.tracklist-empty-actions .pill.primary:hover {
+  background: color-mix(in oklab, var(--accent) 86%, white);
+}
+
+/* --- selection bar ------------------------------------------------------- */
 
 .tracklist-selection {
   position: absolute;

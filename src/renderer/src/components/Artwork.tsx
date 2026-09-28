@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { Music } from "./Icons"
 import "./Artwork.css"
 
 interface ArtworkProps {
@@ -15,8 +14,8 @@ interface ArtworkProps {
 
 /**
  * Cover art with a graceful fallback. A missing or unreadable image falls back
- * to a tinted monogram derived from the title, which is far more recognisable
- * than a generic grey square.
+ * to a monogram derived from the title, which is far more recognisable than a
+ * generic grey square.
  */
 export default function Artwork({
   trackId,
@@ -26,17 +25,29 @@ export default function Artwork({
   className = "",
   seed,
 }: ArtworkProps) {
-  // The failure flag is tracked against the id that produced it. Storing just a
-  // boolean meant one undecodable cover poisoned every later track, because the
-  // component instance is reused at a stable position without a React key.
+  /*
+   * The state is tracked against a key that includes `hasArtwork`, not just the
+   * id. Keying on the id alone meant a track whose cover failed to decode stayed
+   * broken forever, even after a rescan turned up working art for it — the flag
+   * still matched, so the image was never retried. The component instance is
+   * also reused at a stable position without a React key, so the key has to
+   * change whenever the thing being displayed does.
+   */
+  const source = `${trackId}|${hasArtwork ? 1 : 0}`
   const [failedFor, setFailedFor] = useState<string | null>(null)
-  const failed = failedFor === trackId
+  const [loadedFor, setLoadedFor] = useState<string | null>(null)
+  const failed = failedFor === source
+
   const url = window.titan.coverUrl(trackId, hasArtwork)
-  const showImage = hasArtwork && !failed
+  const showImage = hasArtwork && !failed && Boolean(url)
+  /*
+   * A freshly mounted track starts unresolved, so the image fades in rather than
+   * popping. On a first paint of a long library this is the single most
+   * conspicuous piece of missing motion.
+   */
+  const resolved = loadedFor === source
 
   const monogram = (seed ?? alt).trim().charAt(0).toUpperCase() || "♪"
-  // Deterministic hue per track keeps the fallback varied but stable.
-  const hue = [...trackId].reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 360, 7)
 
   return (
     <div
@@ -46,17 +57,36 @@ export default function Artwork({
         height: size,
         // Keeps the placeholder box from collapsing before art resolves.
         minWidth: size,
-        ["--hue" as string]: String(hue),
+        // Published so the drop shadow can scale with the art. See Artwork.css.
+        ["--art-size" as string]: `${size}px`,
       }}
     >
-      {showImage && url ? (
-        <img src={url} alt={alt} draggable={false} onError={() => setFailedFor(trackId)} />
-      ) : (
-        <span className="artwork-fallback" aria-hidden="true">
-          <Music size={Math.max(14, Math.round(size * 0.34))} />
-          <span className="artwork-monogram">{monogram}</span>
-        </span>
-      )}
+      {/*
+       * The monogram is mounted whenever the image has not resolved yet — while
+       * it is decoding *and* when there is nothing to decode — and cross-fades
+       * out underneath the image. Rendering it only in the no-image branch meant
+       * that a cover arriving over the network faded up from a blank plate, and
+       * that a 404 popped a letter onto the plate instead of revealing one.
+       */}
+      <span
+        className={`artwork-fallback ${resolved ? "hidden" : ""}`}
+        aria-hidden="true"
+      >
+        <span className="artwork-monogram">{monogram}</span>
+      </span>
+
+      {showImage ? (
+        <img
+          src={url as string}
+          alt={alt}
+          draggable={false}
+          decoding="async"
+          loading={size > 100 ? "lazy" : undefined}
+          className={resolved ? "resolved" : ""}
+          onLoad={() => setLoadedFor(source)}
+          onError={() => setFailedFor(source)}
+        />
+      ) : null}
     </div>
   )
 }

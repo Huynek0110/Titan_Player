@@ -11,10 +11,11 @@ import {
 import type {
   LibrarySettings,
   Playlist,
+  ScanFailure,
   ScanProgress,
   Track,
 } from "@shared/types"
-import { compareStrings } from "../lib/format"
+import { compareStrings, foldSearch } from "../lib/format"
 
 export type ViewId = "library" | "albums" | "artists" | "favourites" | "playlist" | "settings"
 
@@ -25,8 +26,18 @@ export interface State {
   settings: LibrarySettings | null
   playlists: Playlist[]
   favourites: Set<string>
+  /** Track ids the user hid from the browse views. */
+  hidden: Set<string>
   progress: ScanProgress
   failedCount: number
+  /** Per-file detail behind `failedCount`, so the cause is actionable. */
+  failed: ScanFailure[]
+  /**
+   * Set when the main process could not reach a configured folder. Stays until a
+   * fully clean scan, because that is the case where playlists and favourites
+   * were deliberately left stale and the user needs to know.
+   */
+  scanError: string | null
   lastScanMs: number
 
   view: ViewId
@@ -37,6 +48,8 @@ export interface State {
   queueIndex: number
   /** True when `queue` was built by shuffling, so "next" is not "next in list". */
   shuffled: boolean
+  /** The queue as it was before shuffling, so the toggle can be undone. */
+  queueOrder: string[] | null
   sortBy: LibrarySettings["sortBy"]
   sortDir: "asc" | "desc"
   search: string
@@ -46,21 +59,30 @@ export interface State {
 }
 
 type Action =
-  | { type: "ready"; settings: LibrarySettings; playlists: Playlist[]; favourites: string[] }
+  | {
+      type: "ready"
+      settings: LibrarySettings
+      playlists: Playlist[]
+      favourites: string[]
+      hidden: string[]
+    }
   | { type: "scan:progress"; progress: ScanProgress }
-  | { type: "scan:done"; tracks: Track[]; failed: number; ms: number }
+  | { type: "scan:done"; tracks: Track[]; failed: ScanFailure[]; ms: number }
   | { type: "view"; view: ViewId; playlistId?: string | null }
   | { type: "sort"; sortBy?: State["sortBy"]; sortDir?: State["sortDir"] }
   | { type: "search"; search: string }
   | { type: "play"; queue: string[]; index: number; shuffled?: boolean }
-  | { type: "queue:replace"; queue: string[]; index: number }
   | { type: "queue:step"; delta: number }
+  | { type: "queue:move"; from: number; to: number }
+  | { type: "queue:shuffle"; on: boolean; ordered?: string[] | null }
   | { type: "queue:jump"; index: number }
   | { type: "queue:add"; ids: string[]; position?: "next" | "end" }
   | { type: "queue:removeAt"; index: number }
   | { type: "queue:clear" }
   | { type: "playlists:set"; playlists: Playlist[] }
   | { type: "favourites:set"; favourites: string[] }
+  | { type: "hidden:set"; hidden: string[] }
+  | { type: "scan:error-cleared" }
   | { type: "settings:set"; settings: LibrarySettings }
   | { type: "nowPlaying"; open: boolean }
   | { type: "showQueue"; open: boolean }
@@ -73,14 +95,18 @@ const initial: State = {
   settings: null,
   playlists: [],
   favourites: new Set(),
+  hidden: new Set(),
   progress: { phase: "idle", found: 0, parsed: 0, total: 0 },
   failedCount: 0,
+  failed: [],
+  scanError: null,
   lastScanMs: 0,
   view: "library",
   activePlaylistId: null,
   queue: [],
   queueIndex: -1,
   shuffled: false,
+  queueOrder: null,
   sortBy: "title",
   sortDir: "asc",
   search: "",
@@ -106,17 +132,34 @@ function reducer(state: State, action: Action): State {
         settings: action.settings,
         playlists: action.playlists,
         favourites: new Set(action.favourites),
+        hidden: new Set(action.hidden),
         sortBy: action.settings.sortBy,
         sortDir: action.settings.sortDir,
         view: (action.settings.lastView as ViewId) ?? "library",
-        // Only Favourites carries a playlist id. Restoring a playlist view with
-        // no id used to render the library under the heading "Playlist", with
-        // nothing highlighted in the sidebar.
-        activePlaylistId: action.settings.lastView === "favourites" ? "sys:favourites" : null,
+        // Only Favourites carries a built-in playlist id. A custom playlist has
+        // to be restored explicitly, or a relaunch landed on the "playlist" view
+        // with no id: an empty list under the heading "Playlist", with nothing
+        // highlighted in the sidebar.
+        activePlaylistId:
+          action.settings.lastView === "favourites"
+            ? "sys:favourites"
+            : action.settings.lastView === "playlist"
+              ? action.settings.lastPlaylistId
+              : null,
       }
 
     case "scan:progress":
-      return { ...state, progress: action.progress }
+      return {
+        ...state,
+        progress: action.progress,
+        // A progress event that reports a problem is the only place the main
+        // process can tell the renderer that a configured folder was
+        // unreachable, and it is the only warning that playlists and favourites
+        // were deliberately left alone. Hold it in state so it survives the
+        // `scan:done` that lands a task later, and so it is visible from any
+        // view rather than only while a component happens to be mounted.
+        scanError: action.progress.phase === "error" ? action.progress.error ?? null : state.scanError,
+      }
 
     case "scan:done": {
       const byId = new Map(action.tracks.map((t) => [t.id, t]))
@@ -129,8 +172,16 @@ function reducer(state: State, action: Action): State {
         byId,
         queue,
         queueIndex: reindex(queue, state.queueIndex, currentId),
-        failedCount: action.failed,
+        failedCount: action.failed.length,
+        // Keep the detail, not just the count. "12 could not be read" tells the
+        // user nothing they can act on; the per-file reason is what makes it
+        // fixable, and Settings can now list it.
+        failed: action.failed,
         lastScanMs: action.ms,
+        // Only a fully clean scan clears the warning. A partial one that reached
+        // fewer folders than configured is exactly the case that must stay
+        // visible, so it is not treated as success.
+        scanError: action.failed.length > 0 ? state.scanError : null,
         // A successful scan clears any earlier failure, so the error panel
         // cannot sit on top of a working library.
         error: null,
@@ -164,15 +215,67 @@ function reducer(state: State, action: Action): State {
         queue: action.queue,
         queueIndex: action.index,
         shuffled: action.shuffled ?? false,
+        queueOrder: action.shuffled ? action.queue : null,
       }
-
-    case "queue:replace":
-      return { ...state, queue: action.queue, queueIndex: action.index }
 
     case "queue:step": {
       const next = state.queueIndex + action.delta
       if (next < 0 || next >= state.queue.length) return state
       return { ...state, queueIndex: next }
+    }
+
+    case "queue:move": {
+      const { from, to } = action
+      if (from === to) return state
+      if (from < 0 || from >= state.queue.length) return state
+      // Clamp rather than reject: dragging past either end should drop at the
+      // end, which is what every list reorder does. Rejecting it instead makes
+      // the last row of a queue undroppable.
+      const target = Math.max(0, Math.min(state.queue.length - 1, to))
+      const currentId = state.queueIndex >= 0 ? state.queue[state.queueIndex] : null
+      const queue = [...state.queue]
+      const [moved] = queue.splice(from, 1)
+      queue.splice(target, 0, moved)
+      // Re-resolve the index by id: the playing track must keep playing even
+      // though its position moved.
+      return { ...state, queue, queueIndex: reindex(queue, state.queueIndex, currentId) }
+    }
+
+    /*
+     * Shuffle re-orders the queue that is already loaded rather than just
+     * flipping a flag. Two rules keep it honest:
+     *
+     *  - The playing track has to stay playing.
+     *  - The rows before the current index are history and the rows after it are
+     *    still ahead, so neither is shuffled.
+     *
+     * Turning shuffle *off* restores the order the queue was built in. It cannot
+     * be reconstructed from the current view: the queue may hold tracks from
+     * several views, and rebuilding it from whatever list happens to be on
+     * screen silently dropped everything that was not in that list. The
+     * original order is therefore kept alongside the queue.
+     */
+    case "queue:shuffle": {
+      if (state.queueIndex < 0 || state.queue.length < 2) return { ...state, shuffled: action.on }
+
+      const currentId = state.queue[state.queueIndex]
+      const before = state.queue.slice(0, state.queueIndex)
+      const after = state.queue.slice(state.queueIndex + 1)
+
+      const upcoming = action.on
+        ? shuffleArray(after)
+        : // `ordered` is the queue as it was before shuffling, not a view list.
+          (action.ordered ?? state.queue).filter(
+            (id) => id !== currentId && !before.includes(id) && state.byId.has(id),
+          )
+
+      return {
+        ...state,
+        shuffled: action.on,
+        queue: [...before, currentId, ...upcoming],
+        // Remember the unshuffled order so the toggle is reversible.
+        queueOrder: action.on ? state.queueOrder ?? state.queue : state.queue,
+      }
     }
 
     case "queue:jump":
@@ -224,6 +327,12 @@ function reducer(state: State, action: Action): State {
     case "favourites:set":
       return { ...state, favourites: new Set(action.favourites) }
 
+    case "hidden:set":
+      return { ...state, hidden: new Set(action.hidden) }
+
+    case "scan:error-cleared":
+      return state.scanError === null ? state : { ...state, scanError: null }
+
     case "settings:set":
       return { ...state, settings: action.settings }
 
@@ -243,11 +352,15 @@ function reducer(state: State, action: Action): State {
 
 export interface Store extends State {
   playTracks: (tracks: Track[], startIndex: number, shuffled?: boolean) => void
+  /** Re-order the current queue in place, or restore album order. */
+  setShuffle: (on: boolean) => void
   playNext: () => void
   playPrev: () => void
   jumpTo: (index: number) => void
   enqueue: (ids: string[], position?: "next" | "end") => void
   removeFromQueue: (index: number) => void
+  /** Drag-to-reorder within the queue. Indices are clamped, not rejected. */
+  moveInQueue: (from: number, to: number) => void
   clearQueue: () => void
   rescan: () => Promise<void>
   setView: (view: ViewId, playlistId?: string | null) => void
@@ -256,18 +369,28 @@ export interface Store extends State {
   setNowPlaying: (open: boolean) => void
   setShowQueue: (open: boolean) => void
   dismissError: () => void
-  updateSettings: (patch: Partial<LibrarySettings>) => Promise<void>
+  /** Persist a settings patch. Resolves with the merged settings as stored. */
+  updateSettings: (patch: Partial<LibrarySettings>) => Promise<LibrarySettings>
   createPlaylist: (name: string) => Promise<Playlist>
   renamePlaylist: (id: string, name: string) => Promise<void>
   setPlaylistTracks: (id: string, trackIds: string[]) => Promise<void>
   deletePlaylist: (id: string) => Promise<void>
   toggleFavourite: (trackId: string) => Promise<void>
+  /** Hide a track from the browse views, or bring it back. */
+  setHidden: (trackId: string, hidden: boolean) => Promise<void>
   addFolder: () => Promise<void>
   removeFolder: (folder: string) => Promise<void>
   /** Tracks for the current view, filtered by search and sorted. */
   visibleTracks: Track[]
+  /** Per-file scan failures from the last scan. */
+  failed: ScanFailure[]
+  /** Why a configured folder was unreachable, if one was. */
+  scanError: string | null
+  clearScanError: () => void
   currentTrack: Track | null
   queueTracks: Track[]
+  /** Ids hidden from the browse views. */
+  hidden: Set<string>
 }
 
 const StoreContext = createContext<Store | null>(null)
@@ -292,13 +415,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     void (async () => {
       try {
-        const [settings, playlists, favourites] = await Promise.all([
+        const [settings, playlists, favourites, hidden] = await Promise.all([
           window.titan.getSettings(),
           window.titan.getPlaylists(),
           window.titan.getFavourites(),
+          window.titan.getHidden(),
         ])
         if (cancelled) return
-        dispatch({ type: "ready", settings, playlists, favourites })
+        dispatch({ type: "ready", settings, playlists, favourites, hidden })
         // Pass the freshly fetched settings through, so the first scan does not
         // depend on a re-render having happened yet.
         await scan(settings)
@@ -332,7 +456,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({
         type: "scan:done",
         tracks: result.tracks,
-        failed: result.failed.length,
+        failed: result.failed,
         ms: result.durationMs,
       })
     } catch (err) {
@@ -344,6 +468,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "scan:progress", progress: { phase: "walking", found: 0, parsed: 0, total: 0 } })
     await scan()
   }, [scan])
+
+  /** Re-read the playlist list from the main process, the single source of truth. */
+  const refreshPlaylists = useCallback(async () => {
+    const playlists = await window.titan.getPlaylists()
+    dispatch({ type: "playlists:set", playlists })
+  }, [])
+
+  /** Persist settings and keep the renderer's copy in step. */
+  const store_updateSettings = useCallback(async (patch: Partial<LibrarySettings>) => {
+    const settings = await window.titan.updateSettings(patch)
+    dispatch({ type: "settings:set", settings })
+    if (patch.sortBy || patch.sortDir) {
+      dispatch({ type: "sort", sortBy: patch.sortBy, sortDir: patch.sortDir })
+    }
+    return settings
+  }, [])
 
   // --- playback ----------------------------------------------------------
   const playTracks = useCallback((tracks: Track[], startIndex: number, shuffled = false) => {
@@ -390,14 +530,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         base = state.tracks
     }
 
-    const query = state.search.trim().toLowerCase()
+    // "Hide from library" removes a track from the browse views but leaves it
+    // reachable where it was explicitly asked for: a favourite, or a member of a
+    // playlist. Hiding is for a bad rip or a spoken intro that pollutes the album
+    // view, not for silencing a track the user deliberately curated somewhere.
+    if (state.hidden.size > 0) {
+      const activeIds =
+        state.view === "playlist"
+          ? new Set(
+              state.playlists.find((p) => p.id === state.activePlaylistId)?.trackIds ?? [],
+            )
+          : null
+      base = base.filter(
+        (t) => !state.hidden.has(t.id) || state.favourites.has(t.id) || activeIds?.has(t.id),
+      )
+    }
+
+    // Search folds diacritics, so "muoi" finds "Mười" and "nguyen" finds
+    // "Nguyễn". Without it a Vietnamese library is effectively unsearchable by
+    // anyone not typing every mark perfectly. Genre and track number are folded
+    // in too, since both are natural things to look for.
+    const query = foldSearch(state.search.trim())
     const searched = query
-      ? base.filter(
-          (t) =>
-            t.title.toLowerCase().includes(query) ||
-            t.artist.toLowerCase().includes(query) ||
-            t.album.toLowerCase().includes(query),
-        )
+      ? base.filter((t) => {
+          if (foldSearch(t.title).includes(query)) return true
+          if (foldSearch(t.artist).includes(query)) return true
+          if (foldSearch(t.album).includes(query)) return true
+          if (t.genre.some((g) => foldSearch(g).includes(query))) return true
+          if (t.trackNo !== null && String(t.trackNo) === query) return true
+          if (t.year !== null && String(t.year).includes(query)) return true
+          return false
+        })
       : base
 
     // Playlists keep their own hand-made order; everything else is sorted.
@@ -431,6 +594,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ...state,
       visibleTracks: sorted,
       currentTrack,
+      failed: state.failed,
+      scanError: state.scanError,
+      clearScanError: () => dispatch({ type: "scan:error-cleared" }),
+      /** Hidden ids, so a row can render its own hidden state. */
+      hidden: state.hidden,
       queueTracks: state.queue
         .map((id) => state.byId.get(id))
         .filter((t): t is Track => Boolean(t)),
@@ -438,47 +606,59 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       enqueue,
       playNext: () => dispatch({ type: "queue:step", delta: 1 }),
       playPrev: () => dispatch({ type: "queue:step", delta: -1 }),
+      setShuffle: (on) => {
+        dispatch({ type: "queue:shuffle", on, ordered: stateRef.current.queueOrder })
+        // Persist through the store so the renderer's own copy of settings is
+        // updated. Calling the bridge directly left `settings.shuffle` stale,
+        // which made the toggle one-way: it could only ever switch shuffle on.
+        void store_updateSettings({ shuffle: on })
+      },
       jumpTo: (index: number) => dispatch({ type: "queue:jump", index }),
       removeFromQueue: (index: number) => dispatch({ type: "queue:removeAt", index }),
+      moveInQueue: (from, to) => dispatch({ type: "queue:move", from, to }),
       clearQueue: () => dispatch({ type: "queue:clear" }),
       rescan,
       setView: (view, playlistId) => {
-        dispatch({ type: "view", view, playlistId })
-        const current = stateRef.current.settings
-        if (current) void window.titan.updateSettings({ lastView: view })
+        const id = playlistId === undefined ? stateRef.current.activePlaylistId : playlistId
+        dispatch({ type: "view", view, playlistId: id })
+        // Persist both halves. Saving only the view meant a relaunch restored
+        // `view: "playlist"` with a null id and rendered an empty library.
+        void store_updateSettings({
+          lastView: view,
+          lastPlaylistId: id ?? null,
+        }).catch(() => {})
       },
       setSort: (sortBy, sortDir) => dispatch({ type: "sort", sortBy, sortDir }),
       setSearch: (search) => dispatch({ type: "search", search }),
       setNowPlaying: (open) => dispatch({ type: "nowPlaying", open }),
       setShowQueue: (open) => dispatch({ type: "showQueue", open }),
       dismissError: () => dispatch({ type: "error", message: null }),
-      updateSettings: async (patch) => {
-        const settings = await window.titan.updateSettings(patch)
-        dispatch({ type: "settings:set", settings })
-        if (patch.sortBy || patch.sortDir) {
-          dispatch({ type: "sort", sortBy: patch.sortBy, sortDir: patch.sortDir })
-        }
-      },
+      updateSettings: store_updateSettings,
+      /*
+       * Playlist mutations re-read the whole list from the main process instead
+       * of patching the renderer's copy.
+       *
+       * `stateRef.current` is only refreshed when React commits, so a mutation
+       * that dispatches and is immediately followed by another one — duplicate a
+       * playlist, or create one and then fill it — read a list that predated the
+       * first call and wrote it back with the new playlist missing. The playlist
+       * then vanished from the sidebar. Making the main process the single source
+       * of truth removes that whole class of bug, and the list is small.
+       */
       createPlaylist: async (name) => {
         const playlist = await window.titan.createPlaylist(name)
-        dispatch({ type: "playlists:set", playlists: [...stateRef.current.playlists, playlist] })
+        await refreshPlaylists()
         return playlist
       },
       renamePlaylist: async (id, name) => {
         const updated = await window.titan.updatePlaylist(id, { name })
         if (!updated) return
-        dispatch({
-          type: "playlists:set",
-          playlists: stateRef.current.playlists.map((p) => (p.id === id ? updated : p)),
-        })
+        await refreshPlaylists()
       },
       setPlaylistTracks: async (id, trackIds) => {
         const updated = await window.titan.updatePlaylist(id, { trackIds })
         if (!updated) return
-        dispatch({
-          type: "playlists:set",
-          playlists: stateRef.current.playlists.map((p) => (p.id === id ? updated : p)),
-        })
+        await refreshPlaylists()
       },
       deletePlaylist: async (id) => {
         const ok = await window.titan.deletePlaylist(id)
@@ -494,6 +674,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       toggleFavourite: async (trackId) => {
         const favourites = await window.titan.toggleFavourite(trackId)
         dispatch({ type: "favourites:set", favourites })
+      },
+      setHidden: async (trackId, hidden) => {
+        // The queue is deliberately left alone. Hiding a track is about keeping
+        // it out of the browse views, not about stopping playback, so hiding the
+        // currently playing track must not interrupt it.
+        const next = await window.titan.setHidden(trackId, hidden)
+        dispatch({ type: "hidden:set", hidden: next })
       },
       addFolder: async () => {
         const picked = await window.titan.pickFolders()

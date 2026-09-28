@@ -7,10 +7,16 @@
       and audio both arrive over the custom media:// scheme, and without these
       the whole design silently degrades: audio refuses to play and every image
       falls back to its monogram.
+
+      Vite's dev server needs three relaxations that production must not have:
+      @vitejs/plugin-react injects an inline module preamble, the HMR client
+      connects over a websocket, and the dev server may evaluate styles. Rather
+      than weakening the shipped policy, the dev-only case is relaxed here so a
+      packaged build keeps the strict version.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' media: blob: data:; media-src 'self' media: blob: data:; connect-src 'self' media:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' media: blob: data:; media-src 'self' media: blob: data:; connect-src 'self' media: ws: http://localhost:* ws://localhost:*; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Titan Player</title>

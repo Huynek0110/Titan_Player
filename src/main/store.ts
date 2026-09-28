@@ -13,9 +13,29 @@ interface PersistedState {
   favourites: string[]
   /** Track ids the user has hidden from the library view. */
   hidden: string[]
+  /**
+   * Absolute path -> ISO timestamp of when the file was first seen.
+   *
+   * Without this, `addedAt` is stamped at parse time, so every rescan hands
+   * every track a brand new date and sorting by "Date added" reshuffles the
+   * whole library at random.
+   */
+  firstSeen: Record<string, string>
 }
 
-const SCHEMA_VERSION = 1
+/**
+ * Bumped when the shape of persisted state changes in a way that needs a
+ * one-time correction rather than a merge.
+ *
+ * 2: the default sort became album order, so a library that inherited the old
+ *    "title" default would otherwise keep alphabetical order forever and ignore
+ *    the disc and track numbers every one of its files carries.
+ * 3: the same correction again. Version 2 was consumed by a session that still
+ *    had the old renderer, which then wrote "title" back, so a file reading
+ *    `version: 2` no longer proved the migration had ever taken effect. Keying
+ *    the correction on the version is the only reliable signal available.
+ */
+const SCHEMA_VERSION = 3
 
 function defaultSettings(): LibrarySettings {
   return {
@@ -23,10 +43,14 @@ function defaultSettings(): LibrarySettings {
     useSystemMusicFolder: true,
     extensions: DEFAULT_EXTENSIONS,
     lastView: "library",
+    lastPlaylistId: null,
     volume: 0.8,
     repeat: "off",
     shuffle: false,
-    sortBy: "title",
+    // Album order, not title order. Audio files carry disc and track numbers,
+    // and honouring them is what makes a library read the way the artist
+    // intended rather than alphabetically.
+    sortBy: "album",
     sortDir: "asc",
   }
 }
@@ -66,21 +90,41 @@ export async function loadState(): Promise<PersistedState> {
     playlists: systemPlaylists(),
     favourites: [],
     hidden: [],
+    firstSeen: {},
   }
 
   try {
     const raw = await fs.readFile(stateFilePath(), "utf8")
     const parsed = JSON.parse(raw) as Partial<PersistedState>
+    const settings = { ...defaults.settings, ...(parsed.settings ?? {}) }
+
+    /*
+     * One-time corrections for state written by an older build. Changing a
+     * default is not enough on its own: an existing settings file already
+     * carries the old value, so the change would never reach anyone who had
+     * run the app before, which is exactly the person complaining that their
+     * tracks are in the wrong order.
+     */
+    if (typeof parsed.version === "number" && parsed.version < SCHEMA_VERSION) {
+      settings.sortBy = "album"
+      settings.sortDir = "asc"
+    }
+
     state = {
       version: SCHEMA_VERSION,
       // Merge so a settings file written by an older build still loads.
-      settings: { ...defaults.settings, ...(parsed.settings ?? {}) },
+      settings,
       playlists: Array.isArray(parsed.playlists) && parsed.playlists.length > 0
         ? parsed.playlists
         : defaults.playlists,
       favourites: Array.isArray(parsed.favourites) ? parsed.favourites : [],
       hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [],
+      firstSeen:
+        parsed.firstSeen && typeof parsed.firstSeen === "object" ? parsed.firstSeen : {},
     }
+
+    // Persist the upgrade so it only ever runs once.
+    if ((parsed.version ?? 0) < SCHEMA_VERSION) await flush()
   } catch {
     // First run, or the file is unreadable. Either way the defaults are usable.
     state = defaults
@@ -88,6 +132,42 @@ export async function loadState(): Promise<PersistedState> {
   }
 
   return state
+}
+
+/**
+ * Resolve each track's original discovery date and remember the ones we have
+ * not seen before. Called after a scan so `addedAt` survives a rescan; without
+ * it every track looks newly added and the "Date added" order is meaningless.
+ */
+export async function resolveFirstSeen(
+  tracks: Array<{ path: string; addedAt: string }>,
+): Promise<void> {
+  const current = await loadState()
+  let changed = false
+  const now = new Date().toISOString()
+  const seen = new Set<string>()
+
+  for (const track of tracks) {
+    const key = track.path.toLowerCase()
+    seen.add(key)
+    const existing = current.firstSeen[key]
+    if (existing) {
+      track.addedAt = existing
+    } else {
+      current.firstSeen[key] = track.addedAt || now
+      changed = true
+    }
+  }
+
+  // Forget paths that no longer exist, so the file does not grow forever.
+  for (const key of Object.keys(current.firstSeen)) {
+    if (!seen.has(key)) {
+      delete current.firstSeen[key]
+      changed = true
+    }
+  }
+
+  if (changed) await flush()
 }
 
 /** Serialise writes so concurrent callers cannot interleave and corrupt the file. */
@@ -122,10 +202,6 @@ export async function updateSettings(patch: Partial<LibrarySettings>): Promise<L
 
 export function getPlaylists(): Playlist[] {
   return state?.playlists ?? systemPlaylists()
-}
-
-export function getPlaylist(id: string): Playlist | undefined {
-  return getPlaylists().find((p) => p.id === id)
 }
 
 export async function createPlaylist(name: string): Promise<Playlist> {
@@ -177,13 +253,27 @@ export async function deletePlaylist(id: string): Promise<boolean> {
 export async function prunePlaylists(validIds: Set<string>): Promise<void> {
   const current = await loadState()
   let changed = false
+
   for (const playlist of current.playlists) {
     const before = playlist.trackIds.length
     playlist.trackIds = playlist.trackIds.filter((id) => validIds.has(id))
     if (playlist.trackIds.length !== before) changed = true
   }
-  current.favourites = current.favourites.filter((id) => validIds.has(id))
-  current.hidden = current.hidden.filter((id) => validIds.has(id))
+
+  // Favourites and hidden were filtered outside the flag, so a prune that only
+  // touched those two was computed and then thrown away, reappearing on the
+  // next launch.
+  const favourites = current.favourites.filter((id) => validIds.has(id))
+  if (favourites.length !== current.favourites.length) {
+    current.favourites = favourites
+    changed = true
+  }
+  const hidden = current.hidden.filter((id) => validIds.has(id))
+  if (hidden.length !== current.hidden.length) {
+    current.hidden = hidden
+    changed = true
+  }
+
   if (changed) await flush()
 }
 
@@ -204,6 +294,7 @@ export function getHidden(): string[] {
   return state?.hidden ?? []
 }
 
+/** Hide a track from the library views. */
 export async function setHidden(trackId: string, hidden: boolean): Promise<string[]> {
   const current = await loadState()
   const index = current.hidden.indexOf(trackId)

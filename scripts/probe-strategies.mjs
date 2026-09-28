@@ -104,10 +104,25 @@ app.whenReady().then(async () => {
   })
   const htmlPath = path.join(os.tmpdir(), "titan-strategies.html")
   await fs.promises.writeFile(htmlPath, "<!doctype html><meta charset='utf-8'><body>", "utf8")
+  // The probe is a bare page, so it has no Content-Security-Policy. The real
+  // app does, and a media element blocked by CSP fails exactly like a bad
+  // codec: MEDIA_ERR_SRC_NOT_SUPPORTED. Run the same check twice, once with the
+  // app's exact policy, to find out which of the two it is.
+  const CSP = process.argv[3] === "csp" ? true : false
+  const cspMeta = CSP
+    ? `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' media: blob: data:; media-src 'self' media: blob: data:; connect-src 'self' media:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">`
+    : ""
+  // The test function is injected through executeJavaScript rather than written
+  // as page script, because a CSP of script-src 'self' would block inline page
+  // script and hang the probe. Media elements injected this way are still subject
+  // to media-src, which is the directive under test.
+  await fs.promises.writeFile(
+    htmlPath,
+    `<!doctype html><meta charset="utf-8">${cspMeta}<body>probe</body>`,
+    "utf8",
+  )
   await window.loadFile(htmlPath)
-
-  const mediaUrl = `media://audio/${encodeURIComponent(target)}`
-  const directUrl = pathToFileURL(target).toString()
+  log(`CSP enabled: ${CSP}`)
 
   const tryPlay = async (url) =>
     window.webContents.executeJavaScript(`(async () => {
@@ -115,13 +130,17 @@ app.whenReady().then(async () => {
       a.src = ${JSON.stringify(url)};
       return await new Promise((resolve) => {
         a.addEventListener('loadedmetadata', () => {
-          a.play().then(() => setTimeout(() => resolve('PLAYS ' + a.duration.toFixed(1) + 's t=' + a.currentTime.toFixed(2)),
-            1200)).catch(e => resolve('meta ok, play rejected: ' + e.name));
+          a.play().then(() => setTimeout(() => resolve(
+            'PLAYS ' + a.duration.toFixed(1) + 's t=' + a.currentTime.toFixed(2)), 1200))
+            .catch(e => resolve('meta ok, play rejected: ' + e.name));
         });
         a.addEventListener('error', () => resolve('ERROR code=' + (a.error ? a.error.code : '?')));
-        setTimeout(() => resolve('timeout readyState=' + a.readyState), 7000);
+        setTimeout(() => resolve('timeout readyState=' + a.readyState), 6000);
       });
     })()`)
+
+  const mediaUrl = `media://audio/${encodeURIComponent(target)}`
+  const directUrl = pathToFileURL(target).toString()
 
   log(`baseline direct file:// -> ${await tryPlay(directUrl)}`)
   log("")
@@ -131,6 +150,7 @@ app.whenReady().then(async () => {
   }
 
   await fs.promises.unlink(htmlPath).catch(() => {})
+  await fs.promises.unlink(pagePath).catch(() => {})
   window.destroy()
   app.quit()
 })

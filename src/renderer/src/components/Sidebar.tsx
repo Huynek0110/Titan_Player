@@ -1,17 +1,21 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react"
 import { useStore, type ViewId } from "../state/store"
 import { formatCount } from "../lib/format"
+import type { Playlist } from "@shared/types"
 import {
   Artist,
+  Close,
   Disc,
   Heart,
   Library,
+  More,
   Music,
   Plus,
   Refresh,
   Settings,
   Trash,
 } from "./Icons"
+import ContextMenu, { type MenuAnchor, type MenuItem } from "./ContextMenu"
 import "./Sidebar.css"
 
 const SYSTEM_NAV: Array<{
@@ -37,31 +41,168 @@ export default function Sidebar() {
     progress,
     setView,
     createPlaylist,
+    renamePlaylist,
+    setPlaylistTracks,
     deletePlaylist,
     rescan,
   } = store
 
   const [creating, setCreating] = useState(false)
   const [draftName, setDraftName] = useState("")
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState("")
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ anchor: MenuAnchor; id: string } | null>(null)
 
-  const customPlaylists = useMemo(
-    () => playlists.filter((p) => !p.system),
-    [playlists],
-  )
+  /*
+   * The name as last committed, for each of the two inline fields.
+   *
+   * A blur has to decide between "the user is done with this" and "the user
+   * clicked something unrelated". Comparing against the last committed value
+   * answers that without any timing assumptions, and — because the value is
+   * written *before* the IPC round trip — it also absorbs the blur that fires
+   * while that round trip is still in flight, which is what used to create a
+   * second playlist from one Enter.
+   */
+  const committedDraft = useRef<string | null>(null)
+  const committedRename = useRef<string | null>(null)
+  const submittingCreate = useRef(false)
+
+  const customPlaylists = useMemo(() => playlists.filter((p) => !p.system), [playlists])
 
   const scanning = progress.phase === "walking" || progress.phase === "parsing"
 
   const isActive = (id: ViewId, playlistId?: string) =>
     view === id && (playlistId ? activePlaylistId === playlistId : true)
 
-  async function submitNewPlaylist() {
-    const name = draftName.trim()
+  function resetCreate() {
     setCreating(false)
     setDraftName("")
-    if (!name) return
-    const playlist = await createPlaylist(name)
-    setView("playlist", playlist.id)
+    committedDraft.current = null
   }
+
+  async function submitNewPlaylist() {
+    /*
+     * Re-entrancy guard, and not just for the blur. A double Enter, or an Enter
+     * followed by the blur that the input's own unmount provokes, both reach this
+     * function inside a single task — and `resetCreate` only *schedules* the
+     * render that clears `draftName`, so both calls would read the same name out
+     * of the same closure and create it twice.
+     */
+    if (submittingCreate.current) return
+    submittingCreate.current = true
+    const name = draftName.trim()
+    // Recorded before awaiting, not after, so a blur that lands while the IPC
+    // round trip is still in flight compares equal and bails out.
+    committedDraft.current = name
+    resetCreate()
+    try {
+      if (!name) return
+      const playlist = await createPlaylist(name)
+      setView("playlist", playlist.id)
+    } finally {
+      submittingCreate.current = false
+    }
+  }
+
+  /** A blur commits only a draft the user actually changed. */
+  function onCreateBlur() {
+    if (draftName.trim() === (committedDraft.current ?? "")) return
+    void submitNewPlaylist()
+  }
+
+  const startRename = useCallback((playlist: Playlist) => {
+    setRenamingId(playlist.id)
+    setRenameDraft(playlist.name)
+    committedRename.current = playlist.name
+    setConfirmingId(null)
+    setMenu(null)
+  }, [])
+
+  function cancelRename() {
+    committedRename.current = renameDraft.trim()
+    setRenamingId(null)
+  }
+
+  const commitRename = useCallback(
+    async (id: string) => {
+      const previous = committedRename.current
+      const name = renameDraft.trim()
+      committedRename.current = name
+      setRenamingId(null)
+      // An empty or unchanged name is a cancel, not a request to blank a
+      // playlist out of the store.
+      if (!name || name === previous) return
+      await renamePlaylist(id, name)
+    },
+    [renameDraft, renamePlaylist],
+  )
+
+  function onRenameBlur(id: string) {
+    if (renameDraft.trim() === (committedRename.current ?? "")) {
+      setRenamingId(null)
+      return
+    }
+    void commitRename(id)
+  }
+
+  const duplicatePlaylist = useCallback(
+    async (playlist: Playlist) => {
+      /*
+       * Two store calls, because that is what the store offers. The second has
+       * to run *after* the first has landed in state: `createPlaylist` appends
+       * and `setPlaylistTracks` maps over the list it reads, so firing them back
+       * to back meant the mapping ran against a list that did not contain the
+       * copy yet, and the copy vanished from the sidebar until a relaunch.
+       *
+       * No view change on the way out — the request was for a copy, not a
+       * navigation, and the new row appearing in the sidebar is the feedback.
+       */
+      const copy = await createPlaylist(`${playlist.name} copy`)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      await setPlaylistTracks(copy.id, [...playlist.trackIds])
+    },
+    [createPlaylist, setPlaylistTracks],
+  )
+
+  const menuItems = useMemo<MenuItem[]>(() => {
+    if (!menu) return []
+    const target = playlists.find((p) => p.id === menu.id)
+    if (!target) return []
+    return [
+      { label: "Rename", onSelect: () => startRename(target) },
+      { label: "Duplicate", onSelect: () => void duplicatePlaylist(target) },
+      { separator: true },
+      {
+        label: "Delete",
+        danger: true,
+        onSelect: () => {
+          /*
+           * Two inline steps instead of `window.confirm`. Deleting is
+           * irreversible and is the one action here a field cannot undo, so it
+           * gets a deliberate second click — and it gets one drawn by this app,
+           * not a Win32 dialog that looks like a different program opened behind
+           * the player.
+           */
+          setConfirmingId(target.id)
+          setMenu(null)
+        },
+      },
+    ]
+  }, [menu, playlists, startRename, duplicatePlaylist])
+
+  const closeMenu = useCallback(() => setMenu(null), [])
+
+  /**
+   * Keep the row's buttons from stealing focus.
+   *
+   * The "new playlist" field sits directly above the list, and clicking any of a
+   * row's buttons moved focus out of it — which committed the draft, so pressing
+   * Delete on a playlist three rows down quietly created a playlist. Cancelling
+   * the default mousedown behaviour holds focus where it was, so the draft
+   * survives and nothing is created.
+   */
+  const holdFocus = (event: ReactMouseEvent) => event.preventDefault()
 
   const albumCount = useMemo(() => {
     const set = new Set<string>()
@@ -69,10 +210,7 @@ export default function Sidebar() {
     return set.size
   }, [tracks])
 
-  const artistCount = useMemo(
-    () => new Set(tracks.map((t) => t.artist)).size,
-    [tracks],
-  )
+  const artistCount = useMemo(() => new Set(tracks.map((t) => t.artist)).size, [tracks])
 
   return (
     <nav className="sidebar">
@@ -108,7 +246,10 @@ export default function Sidebar() {
             <span>Playlists</span>
             <button
               className="icon-btn sidebar-add"
-              onClick={() => setCreating(true)}
+              onClick={() => {
+                resetCreate()
+                setCreating(true)
+              }}
               aria-label="New playlist"
               title="New playlist"
             >
@@ -123,12 +264,15 @@ export default function Sidebar() {
               value={draftName}
               placeholder="Playlist name"
               onChange={(e) => setDraftName(e.target.value)}
-              onBlur={submitNewPlaylist}
+              onBlur={onCreateBlur}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void submitNewPlaylist()
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                  void submitNewPlaylist()
+                }
                 if (e.key === "Escape") {
-                  setCreating(false)
-                  setDraftName("")
+                  e.preventDefault()
+                  resetCreate()
                 }
               }}
             />
@@ -138,34 +282,95 @@ export default function Sidebar() {
             <p className="sidebar-empty">No playlists yet</p>
           ) : (
             <ul className="nav-list">
-              {customPlaylists.map((playlist) => (
-                <li key={playlist.id} className="nav-row">
-                  <button
-                    className={`nav-item ${isActive("playlist", playlist.id) ? "active" : ""}`}
-                    onClick={() => setView("playlist", playlist.id)}
-                    onDoubleClick={() => {
-                      const name = window.prompt("Rename playlist", playlist.name)
-                      if (name?.trim()) void store.renamePlaylist(playlist.id, name.trim())
-                    }}
+              {customPlaylists.map((playlist) => {
+                const isRenaming = renamingId === playlist.id
+                const isConfirming = confirmingId === playlist.id
+                return (
+                  <li
+                    key={playlist.id}
+                    className={`nav-row ${isConfirming ? "confirming" : ""}`}
                   >
-                    <Music size={16} />
-                    <span className="truncate">{playlist.name}</span>
-                    <span className="nav-count">{playlist.trackIds.length}</span>
-                  </button>
-                  <button
-                    className="icon-btn nav-delete"
-                    onClick={() => {
-                      if (window.confirm(`Delete "${playlist.name}"?`)) {
-                        void deletePlaylist(playlist.id)
-                      }
-                    }}
-                    aria-label={`Delete ${playlist.name}`}
-                    title="Delete playlist"
-                  >
-                    <Trash size={14} />
-                  </button>
-                </li>
-              ))}
+                    {isRenaming ? (
+                      <input
+                        className="playlist-input"
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={() => onRenameBlur(playlist.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            void commitRename(playlist.id)
+                          }
+                          if (e.key === "Escape") {
+                            e.preventDefault()
+                            cancelRename()
+                          }
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <button
+                          className={`nav-item ${isActive("playlist", playlist.id) ? "active" : ""}`}
+                          onClick={() => setView("playlist", playlist.id)}
+                          onDoubleClick={() => startRename(playlist)}
+                          title={`${playlist.name} — double-click to rename`}
+                        >
+                          <Music size={16} />
+                          <span className="truncate">{playlist.name}</span>
+                          <span className="nav-count">{playlist.trackIds.length}</span>
+                        </button>
+
+                        {isConfirming ? (
+                          <span className="nav-confirm" onMouseDown={holdFocus}>
+                            <button
+                              className="nav-confirm-yes"
+                              onClick={() => {
+                                setConfirmingId(null)
+                                void deletePlaylist(playlist.id)
+                              }}
+                              title={`Delete ${playlist.name} for good`}
+                            >
+                              Sure?
+                            </button>
+                            <button
+                              className="icon-btn nav-confirm-no"
+                              onClick={() => setConfirmingId(null)}
+                              aria-label={`Cancel deleting ${playlist.name}`}
+                              title="Cancel"
+                            >
+                              <Close size={13} />
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="nav-affordances" onMouseDown={holdFocus}>
+                            <button
+                              className="icon-btn nav-more"
+                              onClick={(e) => {
+                                const box = e.currentTarget.getBoundingClientRect()
+                                setConfirmingId(null)
+                                setMenu({ id: playlist.id, anchor: { x: box.left, y: box.bottom + 4 } })
+                              }}
+                              aria-label={`More options for ${playlist.name}`}
+                              title="More"
+                            >
+                              <More size={15} />
+                            </button>
+                            <button
+                              className="icon-btn nav-delete"
+                              onClick={() => setConfirmingId(playlist.id)}
+                              aria-label={`Delete ${playlist.name}`}
+                              title="Delete playlist"
+                            >
+                              <Trash size={14} />
+                            </button>
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>
@@ -197,6 +402,8 @@ export default function Sidebar() {
           <Settings size={16} />
         </button>
       </div>
+
+      <ContextMenu anchor={menu?.anchor ?? null} items={menuItems} onClose={closeMenu} />
     </nav>
   )
 }

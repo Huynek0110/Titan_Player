@@ -8,13 +8,22 @@ A Windows desktop music player (Electron) that reads a local music folder —
 defaulting to the Windows Music folder — and plays it with a UI deliberately
 better than Spotify. Ships as both a portable `.exe` and an NSIS installer.
 
-## Status: all source written, both tsconfigs typecheck clean, app never launched
+## Status: source complete, both tsconfigs clean, app runs and plays audio
 
-### Verification so far
+### Verification
 
 - `tsc --noEmit -p tsconfig.node.json` — **clean**
 - `tsc --noEmit -p tsconfig.web.json` — **clean**
-- `npm run dev` — **never run.** No build, no packaged output, no runtime test.
+- `npm run dev` — **runs.** HMR confirmed working, so the dev-only CSP relaxation is
+  correct. Screenshots taken from a live window.
+- `npm run dist` — **builds.** NSIS installer and portable `.exe` produced.
+- Audio confirmed playing: `currentTime` advances, no media error.
+
+### The mistake that cost two build cycles
+
+Running `npm run build` and then launching `release/win-unpacked/titan-player.exe`
+shows the **old** build. The packaged app runs its own `app.asar`; only
+`npm run dist:dir` or `npm run dist` refreshes it.
 
 ### Done
 
@@ -31,24 +40,38 @@ Every component has a colocated `.css` file.
 
 ### Still to do
 
-1. `npm run dev` and fix whatever the runtime shows.
-2. `electron-builder.yml`.
-3. `build/icon.png` at 1024×1024 — electron-builder v26 auto-converts to `.ico`, so
-   no `png-to-ico` needed.
-4. `.gitignore`.
-5. `README.md`.
-6. Git init + push to `https://github.com/Huynek0110/Titan_Player`.
-7. Three read-only review subagents, then act on their findings.
+1. `npm run dist` and verify the packaged app.
+2. Commit and push to `https://github.com/Huynek0110/Titan_Player`.
 
-### Two new traps, found while making it compile
+Everything else on the original list is complete: `electron-builder.yml`,
+`build/icon.png` (1024×1024, rendered from `icon.svg` by
+`npm run icon`), `.gitignore`, `README.md`, and three rounds of review
+subagents whose findings have been acted on.
 
-8. **TypeScript 7 removed `baseUrl`.** Both tsconfigs had to drop it and use
+### Traps found while making it compile
+
+3. **TypeScript 7 removed `baseUrl`.** Both tsconfigs had to drop it and use
    relative paths in `paths` instead (`"./src/shared/*"`). With `baseUrl`
    present, `tsc` fails with TS5102.
-9. **`moduleResolution: "node16"` forces explicit `.js` extensions** on every
+4. **`moduleResolution: "node16"` forces explicit `.js` extensions** on every
    relative ESM import. All main/preload/shared imports are now written that
    way. Do not strip them — that is what keeps `music-metadata` resolving to its
    Node build rather than the browser stub.
+
+### Two traps that cost real debugging time
+
+5. **`src/renderer/src/env.d.ts` imported the bridge type from `"../preload"`.**
+   From `src/renderer/src` that resolves to `src/renderer/preload`, which does
+   not exist. The import failed silently and `window.titan` was `any` across the
+   entire renderer, so every callback crossing the bridge became an implicit
+   `any` and no error pointed at the real cause. It is `"../../preload"` now.
+   `tsconfig.web.json` also had `src/preload/*.d.ts` in `include` while the file
+   is `index.ts`, so it was not in the program at all.
+6. **npm blocks install scripts on this machine.** `electron` and `esbuild`
+   postinstalls do not run by default, which leaves a missing `electron.exe` and
+   a missing esbuild binary. Approved once via
+   `npm install-scripts approve esbuild electron`. If `npm ci` is ever run
+   fresh, re-approve or the app will not start.
 
 Also note: `DEFAULT_EXTENSIONS` lives in `src/shared/types.ts`, not in
 `src/main/store.ts`. The renderer needs it, and importing a main-process module
@@ -64,43 +87,62 @@ from the renderer would drag `electron` into the browser bundle.
 | `src/main/store.ts` | Atomic JSON persistence (temp file + rename) in `userData`. Settings, playlists, favourites, hidden tracks. `prunePlaylists()` drops vanished tracks. |
 | `src/main/protocol.ts` | Privileged `media://` scheme. Serves cover art from an in-memory map and audio from `net.fetch(file://)` with a path-traversal jail rooted at the user's music folders. |
 | `src/main/library.ts` | Recursive scan, bounded-concurrency tag parsing, artwork publishing, lyrics extraction, sidecar `.lrc` fallback, typed error classification. |
-| `src/main/index.ts` | Window (`titleBarStyle: hidden` + overlay), all IPC handlers, external-link and navigation lockdown. |
+| `src/main/index.ts` | Window (`titleBarStyle: hidden`, no native overlay), all IPC handlers, single-instance lock, `open with` handling, external-link and navigation lockdown. |
 | `src/preload/index.ts` | The entire renderer-facing API. Plain serialisable values only. |
-| `src/renderer/src/state/store.tsx` | Reducer + context: library, queue, playlists, favourites, sorting, search, view routing. Derives visible/queue/current track. |
+| `src/renderer/src/state/store.tsx` | Reducer + context: library, queue, playlists, favourites, hidden tracks, sorting, search, view routing. Derives visible/queue/current track. |
 | `src/renderer/src/lib/usePlayer.ts` | `<audio>` engine: play/pause/seek/volume, prev-restart-after-3s, repeat/shuffle, keyboard shortcuts, lazy Web Audio `AnalyserNode`. |
-| `src/renderer/src/lib/format.ts` | Duration, bitrate, sample rate, file size, natural-order collation. |
+| `src/renderer/src/lib/format.ts` | Duration, bitrate, sample rate, file size, natural-order collation, diacritic folding. |
 | `src/renderer/src/lib/palette.ts` | Hue-bucketed dominant-colour extraction on a 64×64 canvas, memoised, with luminance-based readable text. |
 | `src/renderer/src/styles/global.css` | Design tokens, ambient wash, grain overlay, scrollbars, focus rings, reduced-motion. |
 
-### Not yet written
+### Bugs that only a running app could find
 
-Nothing in `src/renderer/src/components/` exists yet, and neither does `App.tsx`.
-This is the remaining bulk of the work:
+Each of these looked correct in review and was invisible until the app ran.
 
-- `Icons.tsx` — shared inline SVG set
-- `TitleBar.tsx` — drag region + window controls
-- `Sidebar.tsx` — nav, playlists, rescan
-- `TrackList.tsx` — virtualised rows, drag-to-reorder, context menu
-- `PlayerBar.tsx` — transport, seek bar, volume
-- `NowPlaying.tsx` — full-screen view
-- `LyricsPane.tsx` — the karaoke fill
-- `AlbumsView.tsx`, `ArtistsView.tsx`
-- `PlaylistView.tsx`
-- `QueuePanel.tsx`
-- `Settings.tsx`
-- `Visualiser.tsx`
-- `ContextMenu.tsx`
-- `App.tsx` — layout, routing, keyboard
-
-### Not yet done at all
-
-- `electron-builder.yml` + `build/icon.png` (1024×1024)
-- `.gitignore`
-- `README.md`
-- Git init + push to `https://github.com/Huynek0110/Titan_Player`
-- Three read-only review subagents, then act on their findings
-- First `npm run dev` — **the app has never been launched**, so nothing is
-  compile-verified yet. Run `npm run typecheck` first; expect real errors.
+- **Five window buttons.** `titleBarStyle: "hidden"` was combined with
+  `titleBarOverlay`, which draws the native minimise/maximise/close, *and*
+  `TitleBar.tsx` drew its own. All three are now drawn by the app. The overlay
+  also had a fully transparent `color`, so hovering the native close button
+  painted the Windows system hover rectangle over the near-black UI.
+- **The accent palette never worked.** `palette.ts` built an `Image` with no
+  `crossOrigin`, so `media://` cover art loaded in no-cors mode, the canvas
+  stayed tainted, and `getImageData` threw a `SecurityError` that the `catch`
+  swallowed into the fallback. `corsEnabled: true` and the
+  `access-control-allow-origin` header are both necessary and neither is
+  sufficient; only the attribute makes it a CORS-mode request.
+- **Silent audio with a moving playhead.** `enableVisualiser` called
+  `createMediaElementSource` *before* checking whether the `AudioContext` was
+  running. That call is a one-way door: if the context then fails to start, the
+  element's output exists only inside a silent graph, `currentTime` keeps
+  advancing, and no error surfaces anywhere. The context must be `running`
+  first.
+- **Clicking a track loaded it without playing it.** A flag armed only by the
+  transport's Play button gated auto-play, so all eight "choose a track" entry
+  points — row double-click, the row play button, the context menu, an album
+  card, Play all, a playlist's Play — silently queued instead of playing.
+  A track change is now always an implicit request to hear the track.
+- **Four large `backdrop-filter` surfaces re-blurred every frame of a window
+  resize**, which is what made maximising stutter. Only the player bar keeps a
+  blur, and at 20px rather than 40px.
+- **The lyrics pane reflowed on every lyric change.** `.lyric-line` transitioned
+  `font-size`, and the pane is a flex column, so one line changing size pushed
+  every line below it — 40 lines re-flowing over 420ms, fighting the auto-scroll
+  whose target was itself moving. Size is now constant; hierarchy is weight,
+  opacity and an inner `transform: scale()`.
+- **`stateRef.current` is only refreshed when React commits.** Every playlist
+  mutation that patched the renderer's copy instead of re-reading from the main
+  process lost any playlist created in the same gesture. `createPlaylist` then
+  `setPlaylistTracks` wrote back a list without the new playlist, and it vanished
+  from the sidebar. Mutations now re-read the list.
+- **The pruning guard was all-or-nothing.** Checking `tracks.length > 0` let a
+  library split across `C:` and an external `E:` permanently erase every `E:`
+  track from every playlist when one scan could not reach the drive. It now
+  requires that every configured folder was actually reachable.
+- **`import fs from "node:fs"` is callback-based.** `await fs.stat()` throws.
+  Use `fs.promises.stat()`.
+- **PowerShell blocks `.ps1` shims on this machine** — use `npm.cmd`, `npx.cmd`.
+- **Synthetic mouse clicks from PowerShell never reached the window.** Use CDP
+  `Input.dispatchMouseEvent` via `scripts/play-a-track.mjs`.
 
 ## Toolchain (installed and verified)
 
@@ -117,11 +159,7 @@ Three traps already paid for, do not undo them:
 2. **`tsconfig.node.json` must keep `moduleResolution: "node16"`.** With
    `"bundler"`, `music-metadata`'s `parseFile` silently resolves to the browser
    `core` stub and throws at runtime instead of failing to compile.
-3. **npm blocks install scripts on this machine.** `electron` and `esbuild`
-   postinstalls do not run by default, which leaves a missing `electron.exe` and
-   a missing esbuild binary. Approved once via
-   `npm install-scripts approve esbuild electron`. If `npm ci` is ever run
-   fresh, re-approve or the app will not start.
+3. **Vite is pinned to `^7` for the same reason as #1.**
 
 PowerShell on this box blocks `.ps1` shims — use `npm.cmd` / `npx.cmd`.
 
@@ -201,28 +239,41 @@ ambient gradient stops on the document root, which the whole UI inherits. That
 is the core of the "better than Spotify" claim — Spotify's palette is per-album
 and static, while this tracks the *currently playing* track continuously.
 
-Premium details to carry into the components, from the research brief:
+Premium details carried into the components, from the research brief:
 
 - Spring-chased seek bar rather than a position tracker, so dragging has
-  momentum (Apple shipped this on iOS 26).
-- Glass panels: `blur(28px) saturate(1.6)` over the ambient wash.
+  momentum (Apple shipped this on iOS 26). The knob is written from the same
+  rAF loop as the fill, in pixels rather than percentages, because a percentage
+  translate on a 12px element moves it 12px and not the width of the track.
+- Glass panels over the ambient wash. **Only where they earn it** — the player
+  bar, which sits over scrolling content. Four simultaneous full-height blurs
+  re-blurred every frame of a window resize and made maximising stutter.
 - Radii 6/10/16/24px, motion 120/220/420ms on
-  `cubic-bezier(0.22, 1, 0.36, 1)`.
-- A grain overlay at ~2% opacity, already in `global.css`, to stop the large flat
-  gradients from banding.
-- `prefers-reduced-motion` is already honoured globally.
+  `cubic-bezier(0.22, 1, 0.36, 1)`, all in `global.css`.
+- A grain overlay to stop the large flat gradients from banding. It has to sit
+  *above* the shell to do that; underneath, the three surfaces with the largest
+  gradients hid it and the only visible region was the flattest one.
+- `prefers-reduced-motion` is honoured globally, and explicitly for the two
+  rAF-driven effects it cannot reach on its own.
 
-Optional libraries, only if the hand-rolled version gets painful:
-`motion` 13.x (not `framer-motion` — same project, current name, one fewer dep)
-for the cover-art `layoutId` transition, and `@tanstack/react-virtual` for the
-track list. Neither is installed yet.
+**The accent is spent on three things only:** the play/pause button, the
+current-track indicator, and focus rings. An engaged toggle is deliberately not
+one of them — eight toggles whose state is independent of what is playing would
+otherwise mean four accent-coloured things with no way to tell which one is the
+current track.
+
+The font is **Segoe UI Variable**, not Inter. Inter was declared in the stack
+but never loaded, and the display tracking and the fifteen font weights had all
+been authored against it. `780`, `800` and every value between 450 and 680 do
+not exist in static Segoe UI, so on Windows 10 the whole hairline hierarchy
+collapsed to 400 or 700.
 
 ## When resuming
 
-1. `npm run typecheck` — nothing has been compiled yet, expect errors.
-2. Write the components listed above, then `App.tsx`.
-3. `npm run dev`.
-4. Only then: `electron-builder.yml`, `build/icon.png` (1024×1024 PNG is enough —
-   electron-builder v26 auto-converts to `.ico`), `.gitignore`, `README.md`,
-   git init and push.
-5. Then spawn the three read-only review subagents and act on what they find.
+1. `npm run typecheck`.
+2. `npm run dev`, then `npm run dist:dir` and launch
+   `release/win-unpacked/titan-player.exe` — **not** `npm run build`, which does
+   not refresh the packaged `app.asar`.
+3. Verify with `scripts/play-a-track.mjs` over CDP on port 9222, and screenshot
+   with `PrintWindow`.
+4. `npm run dist`, then commit and push.

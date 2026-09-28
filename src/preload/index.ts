@@ -49,10 +49,14 @@ const api = {
   ): Promise<Playlist | undefined> => ipcRenderer.invoke("playlists:update", id, patch),
   deletePlaylist: (id: string): Promise<boolean> => ipcRenderer.invoke("playlists:delete", id),
 
-  // --- favourites --------------------------------------------------------
+  // --- favourites / exclusions -------------------------------------------
   getFavourites: (): Promise<string[]> => ipcRenderer.invoke("favourites:get"),
   toggleFavourite: (trackId: string): Promise<string[]> =>
     ipcRenderer.invoke("favourites:toggle", trackId),
+
+  getHidden: (): Promise<string[]> => ipcRenderer.invoke("hidden:get"),
+  setHidden: (trackId: string, hidden: boolean): Promise<string[]> =>
+    ipcRenderer.invoke("hidden:set", trackId, hidden),
 
   // --- window ------------------------------------------------------------
   minimize: (): void => ipcRenderer.send("window:minimize"),

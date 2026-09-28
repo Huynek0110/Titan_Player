@@ -4,21 +4,36 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: rgba(6, 6, 10, 0.86);
-  backdrop-filter: blur(42px) saturate(1.5);
-  -webkit-backdrop-filter: blur(42px) saturate(1.5);
-  animation: np-in 320ms var(--ease);
+  /*
+   * No backdrop-filter, and the entry animation only moves. A blur behind a
+   * 92%-opaque black scrim is invisible work, and because the animation touched
+   * opacity the backdrop had to be recomputed on every frame of the transition,
+   * so opening this view was 320ms of continuous full-window blur.
+   */
+  background: rgba(6, 6, 10, 0.94);
+  animation: np-in 300ms var(--ease);
 }
 
 @keyframes np-in {
   from {
-    opacity: 0;
-    transform: translateY(18px) scale(0.99);
+    transform: translateY(14px);
   }
   to {
-    opacity: 1;
     transform: none;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nowplaying {
+    animation: none;
+  }
+}
+
+/* Applies for the lifetime of a splitter drag only, so text selection cannot
+   fight the pointer and the caret does not flicker over the column. */
+body.np-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .nowplaying-top {
@@ -29,6 +44,11 @@
   height: 56px;
   padding: 0 20px;
   flex-shrink: 0;
+  /* Same measure as the body: at 2560 the controls were marooned in the middle
+     of the window with 800px of nothing either side. */
+  width: 100%;
+  max-width: 1240px;
+  margin-inline: auto;
 }
 
 .nowplaying-source {
@@ -43,9 +63,22 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(320px, 0.85fr) minmax(360px, 1.15fr);
-  gap: 46px;
-  padding: 0 52px 40px;
+  /*
+   * Art | splitter | lyrics, on the same 24px rhythm the library, playlist and
+   * player bar use. The old 46px gap and 52px padding were off any scale in the
+   * app, and with no max-width the two columns sat stranded in the middle of a
+   * 2560px display.
+   *
+   * The splitter track is zero wide on purpose: the handle is a 26px box centred
+   * on it, so it occupies the gap between the columns and its hit area is a
+   * comfortable size without eating into either column.
+   */
+  grid-template-columns: 420px 0px var(--np-info, 620px);
+  column-gap: 24px;
+  padding: 0 24px 32px;
+  width: 100%;
+  max-width: 1240px;
+  margin-inline: auto;
 }
 
 /* --- art column -------------------------------------------------------- */
@@ -56,6 +89,7 @@
   align-items: center;
   justify-content: center;
   gap: 20px;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
 }
@@ -64,57 +98,108 @@
   position: relative;
   flex-shrink: 0;
   transform: translate(var(--drift, 0), var(--drift-y, 0));
-  transition: transform 120ms linear;
+  /*
+   * No transition here, and that is load-bearing rather than an omission. The
+   * drift is rewritten every animation frame; a transition on it makes the
+   * compositor chase a value that has already been replaced, which is a
+   * permanent per-frame interpolation for a motion that is supposed to be
+   * frame-accurate.
+   */
 }
 
 .nowplaying-art .artwork {
   border-radius: var(--r-xl);
-  box-shadow:
-    0 30px 80px rgba(0, 0, 0, 0.62),
-    0 0 0 1px rgba(255, 255, 255, 0.07);
+  /*
+   * The hairline only. The elevation comes from the base in Artwork.css, which
+   * scales it from the artwork's own size — at 420px that is 42/118 against the
+   * 30/80 that was hand-picked here, and the softer falloff suits a hero better
+   * than a hard one. A hard-coded shadow here would override the base rather
+   * than add to it, and the two would drift apart again.
+   */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
-/* A soft accent-coloured glow pooled under the artwork. */
+/*
+ * A wide, low-alpha radial gradient instead of a blurred accent-coloured bar.
+ * The drift transform sits on the parent, and `filter: blur(46px)` under a
+ * moving parent re-rasters the blurred surface on every frame of the sweep and
+ * again on every window resize. Two gradient stops cost nothing and read the
+ * same: light pooled under the object.
+ */
 .nowplaying-art-shadow {
   position: absolute;
-  left: 8%;
-  right: 8%;
-  bottom: -34px;
-  height: 68px;
-  border-radius: 50%;
-  background: var(--accent);
-  filter: blur(46px);
-  opacity: 0.4;
+  left: -6%;
+  right: -6%;
+  bottom: -72px;
+  height: 170px;
   z-index: -1;
+  background: radial-gradient(
+    50% 50% at 50% 50%,
+    color-mix(in oklab, var(--accent) 62%, transparent) 0%,
+    transparent 72%
+  );
+  opacity: 0.5;
+  pointer-events: none;
 }
+
+/* --- actions ----------------------------------------------------------- */
 
 .nowplaying-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 4px;
 }
 
-.nowplaying-actions .pill {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid var(--line-1);
+.np-action {
+  padding: 6px 12px;
+  border-radius: var(--r-full);
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--fg-2);
+  transition:
+    color var(--fast) var(--ease),
+    background var(--fast) var(--ease);
 }
 
-.nowplaying-actions .pill:hover {
+.np-action:hover {
   color: var(--fg-0);
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.09);
 }
+
+/* The one that fixes a broken track, so the only one with a surface. */
+.np-action.lead {
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.np-action.lead:hover {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.np-action[aria-pressed="true"] {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.np-action-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--line-2);
+}
+
+/* --- details ----------------------------------------------------------- */
 
 .nowplaying-facts {
   width: 100%;
-  max-width: 400px;
   margin: 0;
-  padding: 14px 16px;
+  padding: 14px 18px;
   display: grid;
-  gap: 7px;
+  gap: 9px 16px;
   border-radius: var(--r-lg);
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--line-1);
@@ -134,23 +219,65 @@
 
 .nowplaying-facts > div {
   display: grid;
-  grid-template-columns: 108px 1fr;
-  gap: 10px;
+  grid-template-columns: 124px 1fr;
+  gap: 12px;
   align-items: baseline;
 }
 
+/*
+ * A 10.5px uppercase label beside a 12.5px value, in a 400px panel, is a table
+ * nobody asked for: the two columns ended up nearly the same visual weight at a
+ * size nobody can read. The label is a plain sentence-case word in a real size,
+ * and the value is set a step heavier so the pairing reads as a caption and its
+ * content rather than as two rows of small print.
+ */
 .nowplaying-facts dt {
-  font-size: 10.5px;
-  font-weight: 640;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: 12.5px;
+  font-weight: 500;
   color: var(--fg-3);
 }
 
 .nowplaying-facts dd {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13.5px;
+  font-weight: 560;
   color: var(--fg-1);
+}
+
+/* --- splitter ---------------------------------------------------------- */
+
+.nowplaying-split {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  /* The handle is wider than the zero-width track it sits in, centred on the
+     gap between the two columns. */
+  justify-self: center;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+  /* Nothing is transitioned here: the width follows the pointer, and a
+     transition would put the artwork and the lyrics a frame out of step with
+     the hand. */
+}
+
+.nowplaying-split-grip {
+  width: 2px;
+  height: 40px;
+  border-radius: var(--r-full);
+  background: var(--line-2);
+  transition: background var(--fast) var(--ease);
+}
+
+.nowplaying-split:hover .nowplaying-split-grip,
+.nowplaying-split:focus-visible .nowplaying-split-grip {
+  background: var(--line-3);
+}
+
+body.np-resizing .nowplaying-split-grip {
+  background: var(--accent);
+  opacity: 0.7;
 }
 
 /* --- info column ------------------------------------------------------- */
@@ -162,7 +289,7 @@
   gap: 5px;
   min-width: 0;
   min-height: 0;
-  padding-bottom: 20px;
+  padding-bottom: 24px;
 }
 
 .nowplaying-title {
@@ -175,11 +302,17 @@
   color: var(--fg-0);
 }
 
+/*
+ * --fg-1, not the accent. The accent is spent on at most three things in this
+ * app — the play button, the current-track indicator, focus rings — and a 19px
+ * artist name in the artwork's own colour was a fourth, on the largest text
+ * after the title.
+ */
 .nowplaying-artist {
   margin: 0;
   font-size: 19px;
   font-weight: 560;
-  color: var(--accent);
+  color: var(--fg-1);
 }
 
 .nowplaying-album {

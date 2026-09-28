@@ -7,6 +7,10 @@ dist/
 release/
 *.tsbuildinfo
 
+# The diagnostics scripts are dev tools, but their captures are not source.
+scripts/*.png
+scripts/*.json
+
 # electron-builder caches
 .cache/
 

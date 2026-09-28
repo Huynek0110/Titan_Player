@@ -1,28 +1,88 @@
+/*
+ * The drawer.
+ *
+ * Geometry: inset to sit between the title bar and the player bar. It used to
+ * run from `top: 0` to `bottom: 0` of the app shell, so its bottom third sat
+ * across the right-hand end of the transport — the volume slider, the queue
+ * toggle that opened it, and the tail of the seek bar. Two glass surfaces with
+ * two different blurs, overlapping, is a smear; and the one control that closes
+ * the drawer was underneath it.
+ *
+ * Z-order: 3, which puts it above the whole `.app-shell` (itself `z-index: 2`,
+ * and therefore a stacking context — the player bar's 20 and the title bar's 30
+ * are interior to that context and cannot compete with anything outside it). It
+ * also leaves the fatal error panel at 60 and the boot screen at 50 above it,
+ * which is what should happen: neither of those is dismissable by clicking the
+ * library.
+ */
 .queue {
   position: absolute;
-  top: 0;
+  top: var(--titlebar-h, 44px);
+  bottom: var(--player-h, 104px);
   right: 0;
-  bottom: 0;
   width: 340px;
-  z-index: 25;
+  z-index: 3;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--line-1);
-  border-radius: 0;
-  background: rgba(16, 16, 24, 0.86);
+  overflow: hidden;
+  border-left: 1px solid var(--line-2);
+  /* Dark enough to read type against, transparent enough that the blur shows.
+     The library scrolling behind is the only thing worth blurring here, and a
+     340px column costs a fraction of what a full-window backdrop does. */
+  background: rgba(14, 14, 22, 0.72);
+  backdrop-filter: blur(28px) saturate(1.6);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
   box-shadow: -20px 0 60px rgba(0, 0, 0, 0.45);
-  animation: queue-in 240ms var(--ease);
+
+  /* Closed state. The transform comes from the right, which is the edge the
+     panel is attached to. */
+  opacity: 0;
+  transform: translateX(22px);
+  transition:
+    opacity var(--mid) var(--ease),
+    transform var(--mid) var(--ease),
+    /* Flipped at the *end* of the exit, so the panel is still visible while it
+       slides away and is gone the instant it is. Visibility rather than
+       `pointer-events: none` because an invisible drawer that still takes focus
+       is a tab trap for the 170ms it spends in that state. */
+    visibility 0s linear var(--mid);
+  visibility: hidden;
 }
 
-@keyframes queue-in {
-  from {
-    opacity: 0;
-    transform: translateX(22px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.queue.open {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition:
+    opacity var(--mid) var(--ease),
+    transform var(--mid) var(--ease),
+    visibility 0s;
+}
+
+/* An obviously-clickable close, not a 28px icon lost among the header. */
+.queue-close {
+  display: grid;
+  place-items: center;
+  width: var(--icon-btn, 34px);
+  height: var(--icon-btn, 34px);
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.08);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.queue-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--fg-0);
+  transform: scale(1.06);
+}
+
+.queue-close:active {
+  transform: scale(0.94);
 }
 
 .queue-head {
@@ -30,21 +90,42 @@
   align-items: center;
   gap: 9px;
   height: 52px;
-  padding: 0 10px 0 18px;
+  padding: 0 8px 0 18px;
   border-bottom: 1px solid var(--line-1);
   flex-shrink: 0;
+  color: var(--fg-2);
 }
 
+/* Two sizes in the header, not six. The label and the count were 13px and
+   11.5px before, which is not a scale, it is two arbitrary numbers. */
 .queue-title {
-  font-size: 13px;
-  font-weight: 640;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 660;
+  letter-spacing: -0.012em;
   color: var(--fg-0);
 }
 
 .queue-count {
-  font-size: 11.5px;
-  color: var(--fg-3);
+  font-size: 12px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
   margin-right: auto;
+}
+
+/* Clipped rather than `display: none`, which would also remove it from the
+   accessibility tree. There is no shared utility for this in global.css; the
+   lead should move it there when consolidating. */
+.queue-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .queue-body {
@@ -54,11 +135,53 @@
   padding: 10px 8px 20px;
 }
 
+/*
+ * No scrim, deliberately.
+ *
+ * A scrim says "nothing behind this can be touched", and that would be a lie
+ * here: the drawer is dismissed by a pointerdown outside itself and the click is
+ * allowed through, so the library is live the entire time the queue is open. The
+ * whole reason to open a queue is to glance at it while browsing. Dimming the
+ * library would advertise a modality the drawer does not have.
+ *
+ * What replaces it is that the dismissal has to be findable without being told:
+ * the panel is a distinct 340px column with a hairline and a cast shadow, the
+ * close button is a filled circle rather than a bare icon, and both the Esc and
+ * Q hints are in the tooltips. Anything the user clicks outside the column is
+ * self-evidently outside it.
+ */
 .queue-empty {
-  margin: 40px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  /* Enough air to be a resting state rather than a shrug, and no more: the
+     previous `margin: 40px 0` pushed one dim sentence into the middle of an
+     empty column and said nothing about what to do next. */
+  margin: 64px 22px 0;
   text-align: center;
-  font-size: 13px;
   color: var(--fg-3);
+}
+
+.queue-empty-title {
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.queue-empty-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-2);
+}
+
+.queue-empty kbd {
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg-1);
 }
 
 .queue-label {
@@ -75,6 +198,7 @@
 }
 
 .queue-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -87,16 +211,56 @@
   background: rgba(255, 255, 255, 0.055);
 }
 
+/*
+ * The playing row is identified by a bar, not only by a tint.
+ *
+ * A 15% accent wash over a dark row and an accent-coloured title are two uses of
+ * the same hue, which is exactly the case colour-blindness fails: the wash and
+ * the hover wash are near-indistinguishable. The bar is a shape, the glyph swap
+ * is a shape, and the title goes to full-contrast foreground so the *text* is
+ * never the only thing carrying the state.
+ */
 .queue-row.current {
   background: color-mix(in oklab, var(--accent) 15%, transparent);
 }
 
-.queue-index {
+.queue-row.current::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+/* One fixed cell, holding either the track's position or the play glyph. */
+.queue-slot {
   width: 20px;
   flex-shrink: 0;
-  text-align: right;
+  display: grid;
+  place-items: center end;
+  color: var(--fg-3);
+}
+
+.queue-index {
   font-size: 11px;
   color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-nowplay {
+  display: none;
+  color: var(--accent);
+}
+
+.queue-row.current .queue-index {
+  display: none;
+}
+
+.queue-row.current .queue-nowplay {
+  display: block;
 }
 
 .queue-text {
@@ -111,33 +275,46 @@
 }
 
 .queue-row.current .queue-text {
-  color: var(--accent);
-  font-weight: 580;
+  font-weight: 620;
 }
 
 .queue-sub {
   font-size: 11px;
-  color: var(--fg-3);
+  color: var(--fg-2);
   font-weight: 450;
+}
+
+.queue-row.current .queue-sub {
+  color: var(--fg-2);
 }
 
 .queue-dur {
   font-size: 11px;
-  color: var(--fg-3);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
+/*
+ * Always present, and at the shared icon-button size rather than a 22px
+ * override. At 22px it was below a comfortable target and it was invisible until
+ * the row was hovered, which left a keyboard user's focused button sitting in a
+ * cell at zero opacity with a focus ring drawn around nothing.
+ */
 .queue-x {
-  width: 22px;
-  height: 22px;
-  opacity: 0;
+  width: var(--icon-btn, 34px);
+  height: var(--icon-btn, 34px);
   color: var(--fg-3);
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease);
 }
 
-.queue-row:hover .queue-x {
+.queue-row:hover .queue-x,
+.queue-row:focus-within .queue-x {
   opacity: 1;
 }
 
 .queue-x:hover {
   color: #ff8080;
+  opacity: 1;
 }

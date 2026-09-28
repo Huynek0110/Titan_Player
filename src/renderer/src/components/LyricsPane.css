@@ -3,6 +3,8 @@
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  /* See `.lyrics-inner`: a fixed lead-in, not a viewport percentage. */
+  --lyrics-pad: 260px;
 }
 
 .lyrics-scroll {
@@ -23,7 +25,15 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 42vh 30px 42vh 8px;
+  /*
+   * A fixed lead-in, not a viewport percentage. With `42vh` the scroll height
+   * depended on the window height, so resizing the window changed the content
+   * height and the auto-scroll target in the same frame, and the "38% down"
+   * anchor drifted with it. Fixed padding also makes the end of a long lyric
+   * reachable: the last line lands near the top of the pane once the scroll
+   * clamps, and the first lines are still clear of the top mask.
+   */
+  padding: var(--lyrics-pad) 30px var(--lyrics-pad) 8px;
 }
 
 /* --- a single line ----------------------------------------------------- */
@@ -31,65 +41,80 @@
 .lyric-line {
   display: block;
   width: 100%;
-  padding: 7px 0;
+  padding: 9px 0;
   text-align: left;
   border-radius: var(--r-md);
   font-family: var(--font-display);
-  /* Big, and it grows further when active. */
-  font-size: 27px;
-  font-weight: 700;
-  line-height: 1.24;
-  letter-spacing: -0.022em;
-  transition:
-    font-size var(--slow) var(--ease),
-    opacity var(--mid) var(--ease),
-    color var(--mid) var(--ease),
-    filter var(--mid) var(--ease),
-    transform var(--slow) var(--ease);
+  /*
+   * The size is deliberately constant. Animating font-size is a layout
+   * property: because the pane is a flex column, every line growing from one
+   * size to another pushed all the lines below it, so the whole pane re-flowed
+   * on every lyric change and the auto-scroll target was itself moving. The
+   * size ramp is carried by an inner scale instead, which is composited.
+   */
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
 }
 
 /*
- * `inline` is load-bearing. With a block or inline-block box the gradient
- * restarts on every line box; with `inline` it wraps across all of them, so a
- * wrapped lyric fills as one continuous sweep.
+ * The scale wrapper, deliberately a block and not the text itself. `transform`
+ * does not apply to non-replaced inline boxes, so the obvious place for the size
+ * ramp is `.lyric-text` — and that is exactly the element which has to stay
+ * `inline` for the fill technique below. Splitting the two roles across a block
+ * parent and an inline child satisfies both without either being compromised.
  */
-.lyric-text {
+.lyric-scale {
+  display: block;
+  transform-origin: left center;
+  transition: transform var(--slow) var(--ease);
+  /* Descender room, as padding on the block rather than on the inline: vertical
+     padding on an inline box inflates the line box and, with it, the height the
+     auto-scroll measures. */
+  padding-bottom: 0.08em;
+}
+
+/*
+ * The gradient carries BOTH the fill and the state colour. `color: transparent`
+ * with a hardcoded 34%-white stop made every inactive line render at about
+ * 1.3:1 against the background, which is effectively invisible — the pane's
+ * whole purpose is reading ahead, so that was a functional defect, not a taste
+ * one. Encoding state in the gradient costs nothing and survives the
+ * background-clip technique.
+ *
+ * `display: inline` is stated rather than left to the span default, because it is
+ * load-bearing and `inline-block` is the change someone would make by accident
+ * while tidying this file. A `background-clip: text` gradient is positioned
+ * across the union of an inline's fragments, which is what lets a lyric that
+ * wraps onto two lines fill as one continuous sweep instead of restarting at
+ * each line box. There is no transition on this rule either: it would fight the
+ * per-frame `--fill` write, which is the whole mechanism.
+ */
+.lyric-line .lyric-text {
   display: inline;
+}
+
+.lyric-line.future .lyric-text {
   background: linear-gradient(
     90deg,
-    var(--fg-0) 0%,
-    var(--fg-0) var(--fill, 0%),
-    rgba(255, 255, 255, 0.34) var(--fill, 0%),
-    rgba(255, 255, 255, 0.34) 100%
+    var(--fg-1) 0%,
+    var(--fg-1) var(--fill, 0%),
+    var(--fg-2) var(--fill, 0%),
+    var(--fg-2) 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  /* Keeps descenders from being clipped by the clip path. */
-  padding-bottom: 0.08em;
 }
 
-.lyric-line.future {
-  opacity: 0.42;
-  color: var(--fg-2);
-  font-size: 23px;
-  font-weight: 650;
+.lyric-line.past .lyric-text {
+  background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.lyric-line.past {
-  opacity: 0.26;
-  filter: blur(0.5px);
-  font-size: 21px;
-}
-
-.lyric-line.active {
-  opacity: 1;
-  color: var(--fg-0);
-  font-size: 30px;
-  transform: translateX(2px);
-}
-
-/* The filled part of the active line is the accent, not white. */
 .lyric-line.active .lyric-text {
   background: linear-gradient(
     90deg,
@@ -101,16 +126,32 @@
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  filter: drop-shadow(0 0 18px color-mix(in oklab, var(--accent) 34%, transparent));
+  /* No drop-shadow: it is re-rastered every frame because --fill is written
+     every frame, which is the most expensive rule in the app for no gain. */
 }
 
-.lyric-line:hover:not(.active) {
-  opacity: 0.85;
-  color: var(--fg-1);
+.lyric-line.future .lyric-scale {
+  transform: scale(0.9);
+}
+
+.lyric-line.past .lyric-scale {
+  transform: scale(0.86);
+}
+
+.lyric-line:hover:not(.active) .lyric-text {
+  background: linear-gradient(90deg, var(--fg-0) 0%, var(--fg-0) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .lyric-line:active {
   transform: scale(0.995);
+}
+
+/* The one line that is in the tab order; the global focus ring is enough. */
+.lyric-line:focus-visible {
+  outline-offset: 4px;
 }
 
 .lyric-translation {
@@ -189,3 +230,58 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+
+/* --- timing nudge ------------------------------------------------------ */
+
+.lyric-nudge {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  /* Pushed to the far end so it reads as an instrument panel rather than as a
+     fourth item in the status line. */
+  margin-left: auto;
+  color: var(--fg-3);
+}
+
+.lyric-nudge-label {
+  margin-right: 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+}
+
+.lyric-nudge button {
+  display: grid;
+  place-items: center;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 4px;
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  font-size: 13px;
+  line-height: 1;
+  transition:
+    color var(--fast) var(--ease),
+    background var(--fast) var(--ease);
+}
+
+.lyric-nudge button:hover {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/* The readout is the reset control, and it is the only part worth looking at:
+   a nudge of zero is unremarkable, a nudge of -0.6s is a diagnosis. */
+.lyric-nudge .nudge-value {
+  min-width: 60px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-3);
+}
+
+.lyric-nudge .nudge-value.shifted {
+  color: var(--fg-1);
+}
+

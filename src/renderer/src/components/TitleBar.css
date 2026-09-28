@@ -2,9 +2,12 @@
   position: relative;
   z-index: 30;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   height: var(--titlebar-h);
-  /* The app owns the full strip, so the drag region spans it. */
+  /* The app owns the full strip, so the drag region spans it. `-webkit-app-region`
+     is inherited, so `.titlebar-drag` and the wordmark inside it are both
+     draggable; the buttons opt out below. `pointer-events: none` on the strip
+     plus `auto` on the actions is what lets the two coexist. */
   -webkit-app-region: drag;
   background: linear-gradient(180deg, rgba(10, 10, 16, 0.9), rgba(10, 10, 16, 0));
   pointer-events: none;
@@ -15,26 +18,57 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  padding-left: 18px;
+  padding-left: var(--gutter);
 }
 
+/*
+ * A wordmark, not a title.
+ *
+ * This used to receive the current page's heading, which put the same
+ * string on screen twice about 40px apart — once shrunken and dim in the
+ * chrome and again at 33px directly below it. A duplicated string reads as
+ * a rendering mistake, not as a window title, and it made the title bar
+ * carry no information: the heading next to it changed on every view, so
+ * the thing the user is actually trying to read while dragging the window
+ * was constantly in motion.
+ *
+ * So the role here is the app's identity, and it is styled to look like a
+ * different kind of object from the heading below it rather than like a
+ * smaller one: 10px, uppercase, tracked, and in --fg-2 rather than
+ * --fg-0. That last one is not a preference — this strip sits over the
+ * top-left corner of the ambient wash, which is the brightest part of the
+ * window and where --fg-3 falls to about 3.2:1, while --fg-2 still holds
+ * 4.6:1.
+ *
+ * `title` stays optional, as an override for the wordmark. It should
+ * never be the page heading; see the note in App.tsx.
+ */
 .titlebar-title {
-  font-size: 12px;
-  font-weight: 550;
-  letter-spacing: 0.02em;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-2xs);
+  font-weight: var(--fw-strong);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
   color: var(--fg-2);
-  opacity: 0.85;
 }
 
-/* Right inset clears the native overlay buttons, which are 44px tall and about
-   138px wide for minimise/maximise/close combined. */
+/*
+ * The caption buttons.
+ *
+ * Full strip height and 44px wide, edge to edge, with no gap and no right
+ * inset, because that is the Windows convention and the hit target is the
+ * reason it exists: 34x30 was a 1020px² target, and a caption button you
+ * can miss is a window you cannot close.
+ *
+ * The hover fill is ours, not the system's. The complaint that started
+ * this was never that the buttons were there — it was that the native
+ * close button painted a light grey system rectangle on top of a near
+ * black interface because the overlay colour was fully transparent. A
+ * white wash at 9% is invisible at rest and unmistakable on hover.
+ */
 .titlebar-actions {
   display: flex;
-  align-items: center;
-  gap: 2px;
-  /* Space for the two native buttons on the right. */
-  margin-right: 78px;
-  padding-right: 6px;
+  align-items: stretch;
   -webkit-app-region: no-drag;
   pointer-events: auto;
 }
@@ -42,9 +76,8 @@
 .titlebar-btn {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-sm);
+  width: 44px;
+  height: 100%;
   color: var(--fg-2);
   transition:
     background var(--fast) var(--ease),
@@ -52,10 +85,19 @@
 }
 
 .titlebar-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-3);
   color: var(--fg-0);
 }
 
+/* No scale on :active. These are 44x44 edge-to-edge rectangles with
+   nothing between them, so shrinking one leaves a visible notch in the
+   strip. A press on a caption button should not reflow the chrome. */
 .titlebar-btn:active {
-  transform: scale(0.94);
+  color: var(--fg-0);
+}
+
+/* Close gets the conventional red, because people look for it. */
+.titlebar-btn.close:hover {
+  background: var(--close);
+  color: #fff;
 }

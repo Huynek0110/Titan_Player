@@ -6,9 +6,20 @@
   width: var(--sidebar-w);
   flex-shrink: 0;
   border-right: 1px solid var(--line-1);
-  background: linear-gradient(180deg, rgba(16, 16, 24, 0.62), rgba(10, 10, 16, 0.5));
-  backdrop-filter: blur(30px) saturate(1.5);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  /*
+   * No backdrop-filter here. A full-height blur behind the navigation meant a
+   * second large Gaussian pass on every frame of a window resize, which is what
+   * made maximising stutter. The ambient wash behind it is already soft, so a
+   * translucent flat fill is visually equivalent and free. The sidebar is also
+   * very slightly darker than the content: chrome should recede.
+   */
+  background: rgba(7, 7, 12, 0.82);
+  /*
+   * `--danger` and `--danger-strong` now live in global.css, because "this
+   * destroys something" has to look the same in every corner of the app. They
+   * were previously redeclared here with identical values, which meant a change
+   * to the real token would silently leave this file behind.
+   */
 }
 
 .sidebar-scroll {
@@ -34,6 +45,7 @@
 }
 
 .nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -45,14 +57,41 @@
   font-weight: 520;
   color: var(--fg-1);
   text-align: left;
+  /* The accent bar carries "you are here"; the row itself only changes tint. */
   transition:
-    background var(--fast) var(--ease),
-    color var(--fast) var(--ease);
+    background var(--mid) var(--ease),
+    color var(--mid) var(--ease);
+}
+
+/*
+ * A 2px accent bar on the leading edge, grown with a transform so the
+ * selection indicator is the one thing in the sidebar that moves. The previous
+ * version put a `translateX(2px)` on `:hover` and reset `.active` to `none`,
+ * which meant the row visibly jumped the instant you selected it, and put
+ * motion on the interaction that needed none instead of the one that did.
+ */
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  border-radius: 0 1px 1px 0;
+  background: var(--accent);
+  transform: translateY(-50%) scaleY(0);
+  transform-origin: center;
+  transition: transform var(--mid) var(--ease);
+}
+
+.nav-item.active::before {
+  transform: translateY(-50%) scaleY(1);
 }
 
 .nav-item svg {
   flex-shrink: 0;
   opacity: 0.85;
+  transition: opacity var(--mid) var(--ease);
 }
 
 .nav-item:hover {
@@ -60,11 +99,15 @@
   color: var(--fg-0);
 }
 
+.nav-item:active {
+  transform: scale(0.985);
+}
+
 .nav-item.active {
   /* A filled pill reads as "selected" without needing a heavy border. */
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.09);
   color: var(--fg-0);
-  font-weight: 600;
+  font-weight: 620;
 }
 
 .nav-item.active svg {
@@ -78,27 +121,88 @@
   font-variant-numeric: tabular-nums;
   color: var(--fg-3);
   padding-left: 6px;
+  /*
+   * The count and the row's buttons trade places, so the count has to be
+   * transitioned too. It had none, which meant it was already invisible on the
+   * same 120ms frame the buttons faded in and the row snapped instead of
+   * cross-fading.
+   */
+  transition: opacity var(--fast) var(--ease);
 }
 
-.nav-delete {
+/*
+ * The hover-revealed row actions, including the inline "Sure?" confirm that
+ * replaces them. Opacity rather than `display`, so the row keeps its layout while
+ * the pointer crosses it, and `pointer-events` so a hidden button is not
+ * silently clickable.
+ */
+.nav-affordances,
+.nav-confirm {
   position: absolute;
   right: 4px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.nav-affordances {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--fast) var(--ease);
+}
+
+.nav-row:hover .nav-affordances,
+.nav-row:focus-within .nav-affordances {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nav-row:hover .nav-count,
+.nav-row:focus-within .nav-count,
+.nav-row.confirming .nav-count {
+  opacity: 0;
+}
+
+.nav-more,
+.nav-delete {
   width: 26px;
   height: 26px;
-  opacity: 0;
   color: var(--fg-2);
 }
 
-.nav-row:hover .nav-delete {
-  opacity: 1;
-}
-
-.nav-row:hover .nav-count {
-  opacity: 0;
-}
-
 .nav-delete:hover {
-  color: #ff6b6b;
+  color: var(--danger);
+}
+
+/*
+ * The delete confirmation is deliberately *not* hover-gated. Once the user has
+ * asked to delete something, the confirmation must not vanish because the
+ * pointer drifted back over the row's icon — and the row underneath stays
+ * legible, so it is obvious what is about to go.
+ */
+.nav-confirm-yes {
+  padding: 3px 9px;
+  border-radius: var(--r-full);
+  font-size: 11px;
+  font-weight: 640;
+  color: var(--danger);
+  background: rgba(255, 90, 90, 0.14);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.nav-confirm-yes:hover {
+  color: var(--accent-fg);
+  background: var(--danger-strong);
+}
+
+.nav-confirm-no {
+  width: 24px;
+  height: 24px;
+  color: var(--fg-3);
 }
 
 /* --- playlists section ------------------------------------------------- */
@@ -144,6 +248,16 @@
 
 .playlist-input::placeholder {
   color: var(--fg-3);
+}
+
+/*
+ * The rename field is the create field in a row. The create version carries an
+ * 8px side inset and an 8px bottom gap for the block layout beneath it, neither
+ * of which makes sense inside a 36px nav row.
+ */
+.nav-row .playlist-input {
+  width: 100%;
+  margin: 0;
 }
 
 /* --- footer ------------------------------------------------------------ */

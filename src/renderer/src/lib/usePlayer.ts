@@ -17,7 +17,10 @@ export interface PlayerState {
 
 const MEDIA_ERR_TEXT: Record<number, string> = {
   1: "Loading was aborted.",
-  2: "A network error interrupted playback.",
+  // The media is fetched over the app's own `media://` scheme from a local
+  // file, so there is no network involved. Saying "network error" here points at
+  // something the user cannot act on.
+  2: "The file could not be read. It may have been moved or deleted.",
   3: "This file could not be decoded.",
   4: "This format is not supported, or the file has a damaged cover-art block.",
 }
@@ -50,6 +53,8 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   const shouldPlayRef = useRef(false)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
+  /** Last queue index an auto-skip was fired for, so it cannot loop forever. */
+  const errorSkipRef = useRef(-1)
 
   // --- load the current track -------------------------------------------
   useEffect(() => {
@@ -69,14 +74,25 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
       audio.load()
     }
 
-    if (shouldPlayRef.current) {
-      // play() rejects when the user has not interacted with the window yet;
-      // that is expected on a cold start and not worth surfacing as an error.
-      void audio.play().catch(() => {
-        shouldPlayRef.current = false
-        setState((s) => ({ ...s, isPlaying: false }))
-      })
-    }
+    /*
+     * Always attempt playback on a track change.
+     *
+     * The previous design armed a flag from the transport's Play button only,
+     * which meant the app's central action was silent: every entry point that
+     * chooses a track (row double-click, the row's play button, the context
+     * menu, an album card, Play all, a playlist's Play) updated the queue and the
+     * artwork and then sat at 0:00 waiting for a second press. Treating a track
+     * change as an implicit request to hear the track is both simpler and what
+     * every music player does — there is no state in which the user deliberately
+     * loads a track and wants silence.
+     */
+    shouldPlayRef.current = true
+    // play() rejects when the window has not been interacted with yet, which is
+    // expected on a cold start and is not worth surfacing as an error.
+    void audio.play().catch(() => {
+      shouldPlayRef.current = false
+      setState((s) => ({ ...s, isPlaying: false }))
+    })
   }, [currentTrack, audioRef])
 
   // --- wire up element events once ---------------------------------------
@@ -106,12 +122,27 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
     }
     const onError = () => {
       const code = audio.error?.code
+      const reason = code ? (MEDIA_ERR_TEXT[code] ?? "Playback failed.") : "Playback failed."
+      const failedTrack = store.currentTrack
+
       setState((s) => ({
         ...s,
         isPlaying: false,
         isLoading: false,
-        error: code ? (MEDIA_ERR_TEXT[code] ?? "Playback failed.") : "Playback failed.",
+        // Name the track. A queue of two hundred with one broken file in it
+        // otherwise gives the user no way to know which one to delete.
+        error: failedTrack ? `${failedTrack.title} — ${reason}` : reason,
       }))
+
+      // Move on rather than stopping dead. One deleted or corrupt file used to
+      // end the session: the queue sat there, the playhead at 0:00, and the user
+      // had to press Next themselves. Bounded so a queue of all-broken files
+      // cannot spin.
+      if (failedTrack && queueIndex >= 0 && queueIndex < queue.length - 1) {
+        errorSkipRef.current = queueIndex
+        shouldPlayRef.current = true
+        store.playNext()
+      }
     }
     const onEnded = () => {
       const mode = store.settings?.repeat ?? "off"
@@ -125,8 +156,12 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
       // `queue:step` refuses to move past the end, so repeat-all has to wrap
       // explicitly or playback simply stops at the last track.
       if (queueIndex >= queue.length - 1) {
-        if (mode === "all" && queue.length > 0) store.jumpTo(0)
-        else {
+        if (mode === "all" && queue.length > 0) {
+          // Wrap. The flag has to be set, or the load effect would load track
+          // one and sit there silent, which looks like the player gave up.
+          shouldPlayRef.current = true
+          store.jumpTo(0)
+        } else {
           shouldPlayRef.current = false
           setState((s) => ({ ...s, isPlaying: false }))
         }
@@ -244,15 +279,42 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
     [audioRef],
   )
 
+  /*
+   * Persisting on every input event meant a full state serialise-and-rename per
+   * step of the volume slider, and the state file contains a first-seen entry
+   * per track. On a large library that is megabytes written dozens of times for
+   * one drag. Debounced, and flushed on window close.
+   */
+  const persistTimer = useRef<number | null>(null)
+
   const setVolume = useCallback(
     (volume: number) => {
       const clamped = Math.max(0, Math.min(1, volume))
       setState((s) => ({ ...s, volume: clamped, muted: clamped === 0 ? s.muted : false }))
-      // Persist, throttled by the input's own drag rate in practice.
-      void store.updateSettings({ volume: clamped })
+
+      if (persistTimer.current) window.clearTimeout(persistTimer.current)
+      persistTimer.current = window.setTimeout(() => {
+        persistTimer.current = null
+        void store.updateSettings({ volume: clamped }).catch(() => {})
+      }, 400)
     },
     [store],
   )
+
+  // Make sure a pending volume write is not lost on the way out.
+  useEffect(() => {
+    const flush = () => {
+      if (persistTimer.current) {
+        window.clearTimeout(persistTimer.current)
+        persistTimer.current = null
+      }
+    }
+    window.addEventListener("beforeunload", flush)
+    return () => {
+      flush()
+      window.removeEventListener("beforeunload", flush)
+    }
+  }, [])
 
   const toggleMute = useCallback(() => {
     setState((s) => ({ ...s, muted: !s.muted }))
@@ -278,69 +340,105 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
   }, [settings?.repeat, store])
 
   const toggleShuffle = useCallback(() => {
-    void store.updateSettings({ shuffle: !(settings?.shuffle ?? false) })
-  }, [settings?.shuffle, store])
+    // Read the queue's own shuffled flag, not the persisted setting. The
+    // setting is only seeded at startup, so reading it made the toggle one-way:
+    // it could switch shuffle on but never off.
+    store.setShuffle(!store.shuffled)
+  }, [store])
 
   // --- Web Audio analyser for the visualiser -----------------------------
   // Created lazily and only once; recreating it on every render would drop the
   // audio graph and produce clicks.
-  const ensureAnalyser = useCallback((): AnalyserNode | null => {
+  /**
+   * Build the Web Audio graph, which is what the visualiser reads.
+   *
+   * This is deliberately NOT wired to playback. Routing an element through
+   * `createMediaElementSource` is irreversible: the element's output then exists
+   * only inside the graph, so if the AudioContext is ever suspended the result
+   * is permanent silence while `currentTime` keeps advancing, with no error
+   * anywhere. A media clock that runs and a speaker that stays quiet is the
+   * worst possible failure to diagnose.
+   *
+   * The context must therefore be created inside a real user gesture, so
+   * `resume()` actually succeeds. The visualiser's toggle is that gesture, and
+   * it is off by default: sound is the product, the bars are decoration.
+   */
+  const enableVisualiser = useCallback(async (): Promise<boolean> => {
     const audio = audioRef.current
-    if (!audio) return null
+    if (!audio) return false
+
     if (analyserRef.current) {
       void audioCtxRef.current?.resume().catch(() => {})
-      return analyserRef.current
+      return true
     }
 
     try {
       const Ctor =
         window.AudioContext ??
         (window as never as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      const ctx = audioCtxRef.current ?? new Ctor()
-      audioCtxRef.current = ctx
+      const ctx = new Ctor()
+      ;(audio as HTMLAudioElement & { __titanCtx?: AudioContext }).__titanCtx = ctx
 
-      // A MediaElementSource can only be created once per element, so guard it.
+      /*
+       * The context must be *running* before the element is routed into the
+       * graph. `createMediaElementSource` is a one-way door: from that moment the
+       * element's output exists only inside the graph, so a context that never
+       * reaches `running` means permanent silence with `currentTime` still
+       * advancing and no error anywhere. Checking afterwards is too late.
+       */
+      await ctx.resume().catch(() => {})
+      if (ctx.state !== "running") {
+        // Nothing has been routed yet, so give the element straight back to the
+        // speakers rather than stranding it in a silent graph.
+        void ctx.close().catch(() => {})
+        audioCtxRef.current = null
+        ;(audio as HTMLAudioElement & { __titanCtx?: AudioContext }).__titanCtx = undefined
+        console.error(`[titan] AudioContext is ${ctx.state}; visualiser left off`)
+        return false
+      }
+
       const element = audio as HTMLAudioElement & {
         __titanSource?: MediaElementAudioSourceNode
       }
-
-      if (!element.__titanSource) {
-        const source = ctx.createMediaElementSource(audio)
-        element.__titanSource = source
-        // Connect to the destination *outside* the creation branch. Doing it
-        // inside meant a throw here left the element permanently silent, since
-        // every later call would short-circuit on the existing source.
-        source.connect(ctx.destination)
-      }
+      const source = ctx.createMediaElementSource(audio)
+      element.__titanSource = source
+      // Connect to the speakers as well as the analyser, outside any conditional.
+      source.connect(ctx.destination)
 
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       analyser.smoothingTimeConstant = 0.8
-      element.__titanSource?.connect(analyser)
+      source.connect(analyser)
 
       analyserRef.current = analyser
-
-      // Once an element is routed through Web Audio its output only exists in
-      // that graph, so a context left suspended means permanent silence. Resume
-      // unconditionally and surface the failure rather than assuming it worked.
-      void ctx
-        .resume()
-        .then(() => {
-          if (ctx.state !== "running") {
-            console.warn(`[titan] AudioContext is ${ctx.state}; audio may be silent`)
-          }
-        })
-        .catch((err) => {
-          console.error("[titan] could not resume the AudioContext:", err)
-        })
-
-      return analyser
+      audioCtxRef.current = ctx
+      return true
     } catch (err) {
-      // Never let the visualiser take playback down with it.
-      console.error("[titan] analyser setup failed:", err)
-      return null
+      console.error("[titan] visualiser setup failed, audio unaffected:", err)
+      return false
     }
   }, [audioRef])
+
+  // Must be stable. An inline arrow gave it a new identity on every re-render,
+  // which tore down and rebuilt the visualiser's whole effect several times a
+  // second and reset its smoothing buffer, making the bars visibly flicker.
+  const getAnalyser = useCallback((): AnalyserNode | null => analyserRef.current, [])
+
+  const next = useCallback(() => {
+    const { queueIndex, queue, settings } = store
+    if (queue.length === 0) return
+    // Repeat-all wraps, so the transport button has to agree with what
+    // auto-advance does when the current track runs out.
+    if (queueIndex >= queue.length - 1) {
+      if ((settings?.repeat ?? "off") === "all") {
+        shouldPlayRef.current = true
+        store.jumpTo(0)
+      }
+      return
+    }
+    shouldPlayRef.current = true
+    store.playNext()
+  }, [store])
 
   return {
     state,
@@ -351,9 +449,10 @@ export function usePlayer(audioRef: RefObject<HTMLAudioElement | null>) {
     setVolume,
     toggleMute,
     previous,
-    next: store.playNext,
+    next,
     cycleRepeat,
     toggleShuffle,
-    ensureAnalyser,
+    enableVisualiser,
+    getAnalyser,
   }
 }

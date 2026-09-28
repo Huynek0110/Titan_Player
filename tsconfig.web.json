@@ -1,7 +1,7 @@
 {
   "include": [
     "src/renderer/src/**/*",
-    "src/preload/*.d.ts",
+    "src/preload/index.ts",
     "src/shared/**/*"
   ],
   "compilerOptions": {

@@ -20,6 +20,24 @@ export const DEFAULT_EXTENSIONS = [
   ".mp4",
 ]
 
+/**
+ * One timed word inside a line, from an Enhanced LRC file.
+ *
+ * `start` and `end` are character offsets into the parent line's `text`, not
+ * fractions and not pixels. The renderer converts them to a gradient percentage
+ * once per animation frame, and character position is the only geometry it can
+ * know without measuring the DOM — which it must never do, because measuring
+ * forces layout.
+ */
+export interface LyricWord {
+  /** When the word starts, in seconds. */
+  time: number
+  /** Character offset of the word's first character in the line text. */
+  start: number
+  /** Character offset one past the word's last character. */
+  end: number
+}
+
 export interface LyricLine {
   /** Start time of the line, in seconds. */
   time: number
@@ -27,8 +45,18 @@ export interface LyricLine {
   end?: number
   /** The words of the line. */
   text: string
-  /** Translation or secondary line shown beneath the primary one, when present. */
-  translation?: string
+  /**
+   * Per-word timing, present only for Enhanced LRC.
+   *
+   * The words hang off the line rather than off the enclosing `Lyrics` object.
+   * A flat, file-wide array would have to be re-joined to lines on every render
+   * (and would double the size of the lyrics payload crossing the IPC bridge for
+   * every track in the library), whereas riding along inside `lines` means every
+   * path that already passes `lines` through — the sidecar reader, the
+   * embedded-tag reader, and `parseLrc` on a file the user picked — carries the
+   * word timing with no extra plumbing and no chance of the two drifting apart.
+   */
+  words?: LyricWord[]
 }
 
 export interface Lyrics {
@@ -94,6 +122,8 @@ export interface LibrarySettings {
   extensions: string[]
   /** Last opened tab. */
   lastView: string
+  /** Last opened playlist, so a relaunch lands back where the user left off. */
+  lastPlaylistId: string | null
   volume: number
   /** Repeat mode for the player. */
   repeat: "off" | "all" | "one"
@@ -116,10 +146,16 @@ export interface ScanProgress {
   error?: string
 }
 
+/** A file the scanner found but could not read, and why. */
+export interface ScanFailure {
+  path: string
+  reason: string
+}
+
 export interface ScanResult {
   tracks: Track[]
   /** Absolute paths that looked like audio but could not be parsed. */
-  failed: Array<{ path: string; reason: string }>
+  failed: ScanFailure[]
   scannedFolders: string[]
   durationMs: number
 }

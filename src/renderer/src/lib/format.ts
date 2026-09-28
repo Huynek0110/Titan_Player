@@ -61,6 +61,23 @@ export function formatCount(n: number, singular: string, plural = `${singular}s`
 /** Natural sort so "Track 2" comes before "Track 10". */
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
 
+/**
+ * Fold a string for searching: strip diacritics and case.
+ *
+ * A Vietnamese-tagged library makes this the difference between a search that
+ * works and one that does not. Typing "muoi" has to find "Mười", and typing
+ * "nguyen" has to find "Nguyễn". `đ`/`Đ` do not decompose under NFD, so they
+ * need handling separately, and it is also why a naive `normalize` alone is not
+ * enough.
+ */
+export function foldSearch(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase()
+}
+
 export function compareStrings(a: string, b: string): number {
   return collator.compare(a, b)
 }

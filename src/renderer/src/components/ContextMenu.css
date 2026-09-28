@@ -1,10 +1,3 @@
-.context-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 900;
-  background: transparent;
-}
-
 .context-menu {
   position: fixed;
   z-index: 901;
@@ -48,6 +41,14 @@
   color: var(--fg-0);
 }
 
+/* The keyboard cursor. Separate from :hover so the two do not fight when the
+   mouse and the arrow keys disagree about which row is current. */
+.context-item.kb:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--fg-0);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .context-item:disabled {
   opacity: 0.35;
   cursor: not-allowed;
@@ -82,4 +83,39 @@
   height: 1px;
   margin: 4px 8px;
   background: var(--line-2);
+}
+
+/*
+ * A content row, for the one thing a label cannot do: collect a value. Sits
+ * flush with the rows either side of it so the menu does not look like it has
+ * gained a section.
+ */
+.context-node {
+  display: flex;
+  align-items: center;
+  padding: 2px 4px 6px;
+}
+
+.context-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line-2);
+  outline: none;
+  transition:
+    border-color var(--fast) var(--ease),
+    background var(--fast) var(--ease);
+}
+
+.context-input::placeholder {
+  color: var(--fg-3);
+}
+
+.context-input:focus {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.09);
 }

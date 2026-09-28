@@ -13,7 +13,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "dist": "electron-vite build && electron-builder --win",
-    "dist:dir": "electron-vite build && electron-builder --win --dir"
+    "dist:dir": "electron-vite build && electron-builder --win --dir",
+    "icon": "electron scripts/render-icon.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

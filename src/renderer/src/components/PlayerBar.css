@@ -1,16 +1,46 @@
+/*
+ * Control-size tokens.
+ *
+ * Six circular accent-filled controls at five different diameters across the
+ * app, and icon buttons at 34, 28, 26, 24 and 22. Sizes were set per component
+ * from whatever felt right in the gap between neighbours, which is how a set ends
+ * up with no scale at all.
+ *
+ * These are declared here rather than in global.css only because PlayerBar.css
+ * is loaded on every launch, so the values are always defined. The lead should
+ * move them into global.css next to `--r-*` and the other layout tokens; every
+ * use below carries a fallback, so nothing breaks in the meantime or if another
+ * stylesheet declares the same names.
+ */
+:root {
+  /* The one diameter for a circular icon button. */
+  --icon-btn: 34px;
+  /* The one diameter for the accent-filled play button. */
+  --play-btn: 46px;
+}
+
 .playerbar {
   position: relative;
   z-index: 20;
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(340px, 2.1fr) minmax(200px, 1fr);
+  grid-template-columns: minmax(230px, 1fr) minmax(360px, 2.1fr) minmax(230px, 1fr);
   align-items: center;
-  gap: 18px;
-  height: var(--player-h);
-  padding: 0 16px;
-  border-top: 1px solid var(--line-1);
-  background: rgba(14, 14, 21, 0.78);
-  backdrop-filter: blur(34px) saturate(1.7);
-  -webkit-backdrop-filter: blur(34px) saturate(1.7);
+  gap: 20px;
+  /*
+   * The token, not a number. This hardcoded 104px while `--player-h` said 92px,
+   * so the one value every other part of the app uses to lay out around the bar
+   * was wrong for as long as it existed. The token now agrees; the component
+   * reads it so they cannot drift again.
+   */
+  height: var(--player-h, 104px);
+  padding: 0 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(12, 12, 18, 0.86);
+  /* The only surface that keeps a backdrop blur, because it genuinely sits over
+     scrolling content. 20px rather than 40: past that point the difference is
+     not visible and the kernel cost is. */
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
 }
 
 /* --- left: now playing ------------------------------------------------- */
@@ -18,26 +48,41 @@
 .playerbar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
+}
+
+.playerbar-left .artwork {
+  /* A slightly larger radius than the row thumbnails, because this is the one
+     piece of artwork the user looks at rather than scans. No box-shadow: the
+     depth is scaled from the art's own size in Artwork.css. */
+  border-radius: 12px;
 }
 
 .playerbar-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .playerbar-title {
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 14.5px;
+  font-weight: 660;
   color: var(--fg-0);
+  letter-spacing: -0.01em;
 }
 
 .playerbar-artist {
-  font-size: 12px;
-  color: var(--fg-2);
+  font-size: 12.5px;
+  font-weight: 520;
+  /*
+   * Foreground, not accent. The artist is the second string on the bar and the
+   * accent is spent on at most three things in the whole app: the play button,
+   * the current-track indicator, and focus rings. Tinting this line made the
+   * colour meaningless — every track looked equally emphasised.
+   */
+  color: var(--fg-1);
 }
 
 .playerbar-idle {
@@ -62,33 +107,67 @@
 }
 
 .play-toggle {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  margin: 0 6px;
+  width: var(--play-btn, 46px);
+  height: var(--play-btn, 46px);
+  margin: 0 8px;
   border-radius: var(--r-full);
-  color: var(--accent-fg);
-  background: var(--fg-0);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  transition:
-    transform var(--fast) var(--ease),
-    box-shadow var(--fast) var(--ease),
-    opacity var(--fast) var(--ease);
+  color: #fff;
+  /* The accent rather than white, so the primary action carries the colour of
+     the record being played. */
+  background: linear-gradient(150deg, var(--accent), color-mix(in oklab, var(--accent) 62%, #000));
+  /*
+   * A shadow should ground the button, not glow around it. At 42% accent over a
+   * near-black bar a 20px blur reads as a red fog with a hard centre rather than
+   * as a raised control, and it is the single most saturated thing on screen
+   * besides the artwork. Neutral, tighter, and just enough to lift the circle
+   * off the transport.
+   */
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  /*
+   * Transform only. The hover state used to grow the box-shadow and put a
+   * `brightness()` filter on a 46px gradient-filled element, which both repaint
+   * every frame and give the button its own filter context — an extra
+   * offscreen buffer for a 46px circle. The white overlay below is the same
+   * idea for free: it is a composited `opacity` change on an already-present
+   * layer.
+   */
+  transition: transform var(--fast) var(--ease);
 }
 
-.play-toggle:hover:not(:disabled) {
-  transform: scale(1.06);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+/* The hover lift, as an overlay rather than a filter. */
+.play-toggle::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--fast) var(--ease);
+}
+
+.play-toggle:hover:not(:disabled)::after {
+  opacity: 0.13;
 }
 
 .play-toggle:active:not(:disabled) {
-  transform: scale(0.95);
+  transform: scale(0.94);
+}
+
+.play-toggle:hover:not(:disabled) {
+  transform: scale(1.07);
 }
 
 .play-toggle:disabled {
-  opacity: 0.3;
+  opacity: 0.28;
   cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: none;
 }
 
 /* --- seek bar ---------------------------------------------------------- */
@@ -104,7 +183,11 @@
 .seek-time {
   width: 40px;
   font-size: 11px;
-  color: var(--fg-3);
+  color: var(--fg-2);
+  /* Declared here as well as via the `.tabular` utility, because `.tabular`
+     lives in TrackList.css and this bar must not depend on a sibling
+     component's stylesheet to stop its own clock from jittering. */
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
@@ -120,6 +203,9 @@
   align-items: center;
   cursor: pointer;
   touch-action: none;
+  /* A focus ring around the whole 18px strip reads as a box floating above the
+     rail. The ring is drawn on the rail instead, further down. */
+  outline: none;
 }
 
 .seek-rail,
@@ -135,16 +221,87 @@
 }
 
 .seek-rail {
-  background: rgba(255, 255, 255, 0.12);
-  transition: height var(--fast) var(--ease);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  /*
+   * No height transition, and no height change on hover. The rail and the fill
+   * are both absolutely positioned with no top/bottom, so they sit at the same
+   * centred offset; growing only the rail on hover produced a 7px grey rail
+   * with a 4px accent bar floating concentrically inside it, and it relaid out
+   * a 640px element on every pointer move.
+   */
+  transition: background var(--fast) var(--ease);
 }
 
 .seek-buffer {
-  background: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/*
+ * While the element waits on data the playhead simply stops, which reads as a
+ * frozen player. Two cues, because they say different things and one alone was
+ * not enough: the buffered region breathes, saying "there is not enough data
+ * yet", and a specular sweep runs the length of the rail, saying "still
+ * fetching". Both live inside the 18px strip the track already occupies, so
+ * nothing reflows and nothing is added to the layout.
+ */
+.seek-track.loading .seek-buffer {
+  animation: seek-breathe 1.3s var(--ease-in-out) infinite;
+}
+
+.seek-track.loading::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 34%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: var(--r-full);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
+  /* Transform only, so the sweep runs on the compositor and never triggers
+     layout or paint. 294% of its own width puts it entirely past the right
+     edge, which is 34% + 100% of the track. */
+  animation: seek-sweep 1.15s var(--ease-in-out) infinite;
+  pointer-events: none;
+}
+
+@keyframes seek-breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes seek-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(294%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seek-track.loading .seek-buffer {
+    animation: none;
+    opacity: 0.8;
+  }
+  /* A static bar means nothing, so it is removed rather than frozen. */
+  .seek-track.loading::after {
+    animation: none;
+    display: none;
+  }
 }
 
 .seek-fill {
-  background: var(--fg-0);
+  background: linear-gradient(90deg, color-mix(in oklab, var(--accent) 78%, #fff), var(--accent));
+  /* No glow. A 12px accent blur on a 640px bar is a saturated haze across the
+     whole transport, and it is the one element that repaints continuously as the
+     spring chases the playhead. The fill reads as progress from its own colour. */
   /* The scaleX lives in the rAF loop, so no transition here on purpose. */
   will-change: transform;
   transform: scaleX(0);
@@ -153,7 +310,15 @@
 .seek-track:hover .seek-rail,
 .seek-track.dragging .seek-rail,
 .seek-track:focus-visible .seek-rail {
-  height: 6px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.seek-track:focus-visible .seek-rail {
+  /* Not transitioned. A 640px box-shadow repaints on every frame of a fade, and
+     a focus ring that takes 120ms to arrive is late for the user who needs it. */
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    0 0 0 2px color-mix(in oklab, var(--accent) 70%, transparent);
 }
 
 .seek-track:hover .seek-fill,
@@ -165,14 +330,17 @@
 .seek-knob {
   position: absolute;
   top: 50%;
+  left: 0;
   width: 12px;
   height: 12px;
-  margin-left: -6px;
   border-radius: var(--r-full);
   background: #fff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  transform: translateY(-50%) scale(0);
-  transition: transform var(--fast) var(--ease);
+  /* Written by the rAF loop. `translateX` is a transform, so it composites;
+     animating `left` would relayout the whole bar on every frame. */
+  transform: translateY(-50%) translateX(0) scale(0);
+  transition: opacity var(--fast) var(--ease);
+  opacity: 0;
   pointer-events: none;
   z-index: 2;
 }
@@ -180,7 +348,12 @@
 .seek-track:hover .seek-knob,
 .seek-track.dragging .seek-knob,
 .seek-track:focus-visible .seek-knob {
-  transform: translateY(-50%) scale(1);
+  opacity: 1;
+}
+
+/* Not seekable yet, so it is a bar of inert pixels rather than a control. */
+.seek-track[aria-disabled="true"] {
+  cursor: default;
 }
 
 /* --- right: auxiliary controls ----------------------------------------- */
@@ -236,6 +409,48 @@
 .slider:hover::-webkit-slider-thumb,
 .slider:focus-visible::-webkit-slider-thumb {
   opacity: 1;
+}
+
+/*
+ * State toggles carry a dot as well as the accent colour.
+ *
+ * `.icon-btn.on { color: var(--accent) }` was the only cue for shuffle-on,
+ * repeat-on and queue-open, which is colour alone: it disappears for anyone who
+ * cannot separate the accent from the foreground, in bright daylight, or on a
+ * display where the artwork happened to yield a low-chroma hue. A dot is a shape
+ * difference for the cost of one pseudo-element, and because the same three
+ * toggles sit next to each other they read as a family.
+ */
+.playerbar .icon-btn {
+  position: relative;
+}
+
+.playerbar .state-btn.on {
+  color: var(--accent);
+}
+
+.playerbar .state-btn.on::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 3px;
+  height: 3px;
+  margin-left: -1.5px;
+  border-radius: var(--r-full);
+  background: currentColor;
+  animation: state-dot-in var(--fast) var(--ease);
+}
+
+@keyframes state-dot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* --- error ------------------------------------------------------------- */

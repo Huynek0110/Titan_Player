@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useStore } from "../state/store"
-import { formatTotalDuration, formatDuration } from "../lib/format"
+import { formatTotalDuration } from "../lib/format"
 import TrackList from "./TrackList"
 import { Music, Play, Shuffle } from "./Icons"
 import "./PlaylistView.css"
@@ -15,7 +15,7 @@ interface PlaylistViewProps {
  */
 export default function PlaylistView({ playlistId }: PlaylistViewProps) {
   const store = useStore()
-  const { playlists, activePlaylistId, setPlaylistTracks, playTracks, enqueue, updateSettings } = store
+  const { playlists, setPlaylistTracks, playTracks, enqueue } = store
 
   const playlist = useMemo(
     () => playlists.find((p) => p.id === playlistId),
@@ -63,7 +63,7 @@ export default function PlaylistView({ playlistId }: PlaylistViewProps) {
     <>
       <header className="playlist-head">
         <div className="playlist-head-art">
-          <div className={`playlist-swatch ${isFavourites ? "fav" : ""}`}>
+          <div className="playlist-swatch">
             <Music size={38} />
           </div>
         </div>
@@ -75,14 +75,7 @@ export default function PlaylistView({ playlistId }: PlaylistViewProps) {
           <h1 className="playlist-title">{playlist.name}</h1>
           <p className="playlist-stats">
             {tracks.length.toLocaleString()} track{tracks.length === 1 ? "" : "s"}
-            {totalSeconds > 0 && (
-              <>
-                {" · "}
-                {formatDuration(totalSeconds) === "0:00"
-                  ? formatTotalDuration(totalSeconds)
-                  : formatTotalDuration(totalSeconds)}
-              </>
-            )}
+            {totalSeconds > 0 && ` · ${formatTotalDuration(totalSeconds)}`}
           </p>
         </div>
 
@@ -97,12 +90,9 @@ export default function PlaylistView({ playlistId }: PlaylistViewProps) {
           </button>
           <button
             className="pill"
-            disabled={tracks.length === 0}
-            onClick={() => {
-              const wasShuffled = store.settings?.shuffle ?? false
-              if (!wasShuffled) void updateSettings({ shuffle: true })
-              playTracks(tracks, 0, true)
-            }}
+            disabled={tracks.length < 2}
+            onClick={() => playTracks(tracks, 0, true)}
+            title="Play this playlist in a random order"
           >
             <Shuffle size={15} /> Shuffle
           </button>
@@ -116,17 +106,22 @@ export default function PlaylistView({ playlistId }: PlaylistViewProps) {
         </div>
       </header>
 
+      {/*
+        Keyed on the playlist itself. The previous key was
+        `activePlaylistId === playlistId ? "active" : "idle"`, which at its only
+        call site is always the literal "active" — so the component never
+        remounted, and switching playlists left the list scrolled wherever the
+        last one happened to be. On a three-track list that reads as an empty
+        pane; on a long one it is a disorienting jump into the middle of an
+        unrelated playlist.
+      */}
       <TrackList
-        key={activePlaylistId === playlistId ? "active" : "idle"}
+        key={playlistId}
         tracks={tracks}
         reorderable={reorderable}
         onReorder={reorder}
         onRemove={removeAt}
-        emptyMessage={
-          isFavourites
-            ? "No favourites yet — tap the heart on any track"
-            : "This playlist is empty"
-        }
+        reason={isFavourites ? "favourites" : "playlist"}
       />
     </>
   )

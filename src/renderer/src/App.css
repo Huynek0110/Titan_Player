@@ -1,3 +1,12 @@
+/* ------------------------------------------------------------------ *
+ * The window shell and the library page.
+ *
+ * Sizing, spacing and motion all come from styles/global.css. What is
+ * left here is layout, and the only literals left are component sizes —
+ * a 33px heading's box, a 54px play button — where a token would only
+ * hide the number from the person deciding what it should be.
+ * ------------------------------------------------------------------ */
+
 .app {
   position: relative;
   height: 100%;
@@ -30,6 +39,53 @@
   flex-direction: column;
 }
 
+/*
+ * View transitions.
+ *
+ * Only `opacity` and `transform` are animated, so switching between the
+ * library, albums and artists costs no layout and cannot stutter.
+ *
+ * The selector is a direct child, and `.app-content` holds exactly one
+ * child, so the animation runs once per *mount* of the view element —
+ * not once per descendant, and not once per child. That is the intent:
+ * the whole view settles in as one object.
+ *
+ * The consequence, which needs a fix in App.tsx rather than here: React
+ * reconciles `<CollectionViews kind="albums" />` and
+ * `<CollectionViews kind="artists" />` as the same element, because they
+ * are the same component type. A prop change does not remount, so going
+ * Albums -> Artists replays nothing while going Library -> Albums does.
+ * Remount it with a key (the exact code is in the hand-off):
+ *
+ *   <CollectionViews key="albums"  kind="albums" />
+ *   <CollectionViews key="artists" kind="artists" />
+ *
+ * or, to catch every view including the two that render the same
+ * component, key the single child of `.app-content` in App.tsx by view
+ * identity. Note that keying the parent would remount the *sidebar*
+ * search input's scroll position, so key the child, not the shell.
+ */
+.app-content > * {
+  animation: view-in var(--mid) var(--ease) both;
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-content > * {
+    animation: none;
+  }
+}
+
 .app-content {
   flex: 1;
   min-height: 0;
@@ -37,33 +93,119 @@
   flex-direction: column;
 }
 
-/* --- library header ---------------------------------------------------- */
+/*
+ * A configured folder could not be reached, so the scan deliberately left
+ * playlists and favourites alone. Surface elevation rather than a border: it
+ * floats on the page, and the amber rail is the only accent-coloured thing in
+ * the shell, so it cannot be confused with the artwork-driven accent.
+ */
+.scan-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin: 0 var(--gutter) var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--warn);
+  color: var(--fg-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  animation: warn-in var(--mid) var(--ease);
+}
+
+.scan-warning > svg {
+  flex-shrink: 0;
+  color: var(--warn);
+}
+
+.scan-warning > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan-warning-dismiss {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  color: var(--fg-3);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.scan-warning-dismiss:hover {
+  background: var(--surface-3);
+  color: var(--fg-0);
+}
+
+@keyframes warn-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-warning {
+    animation: none;
+  }
+}
+
+/* --- page header ------------------------------------------------------- */
+
+/*
+ * The shared page-header rhythm. The library header had 4px of top padding
+ * and the playlist header 24px for the same region at the same role, so
+ * switching between them moved the content by 20px. --page-pad-t/-b and
+ * --gutter are the tokens; this rule is the shape they are applied
+ * through, so a new view has something to copy rather than four numbers
+ * to guess at. The playlist header adopts the same padding in
+ * PlaylistView.css.
+ */
+.page-head {
+  flex-shrink: 0;
+  padding: var(--page-pad-t) var(--gutter) var(--page-pad-b);
+}
 
 .library-head {
   flex-shrink: 0;
-  padding: 6px 24px 12px;
+  padding: var(--page-pad-t) var(--gutter) var(--page-pad-b);
 }
 
 .library-head-top {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--sp-8);
   flex-wrap: wrap;
 }
 
 .library-title h1 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: -0.028em;
+  /* --fs-d2 with its own line-height. The scale sets 33px for every page
+     heading in the app: this one, albums, artists, playlist and settings
+     were at 40, 42 and 30 for the same role, three of them within 4px of
+     each other and none of them a step. */
+  font-size: var(--fs-d2);
+  font-weight: var(--fw-display);
+  line-height: var(--lh-d2);
+  letter-spacing: var(--track-display-sm);
   color: var(--fg-0);
 }
 
 .library-sub {
-  margin: 2px 0 0;
-  font-size: 12.5px;
+  margin: var(--sp-4) 0 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
   color: var(--fg-2);
   font-variant-numeric: tabular-nums;
 }
@@ -71,37 +213,89 @@
 .library-tools {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-1);
 }
 
+/* The visualiser is opt-in; the button says so plainly. */
+.vis-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 32px;
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-full);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-2xs);
+  font-weight: var(--fw-strong);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--fg-2);
+  border: 1px solid var(--line-1);
+  transition:
+    color var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+}
+
+.vis-toggle:hover {
+  color: var(--fg-0);
+  background: var(--surface-2);
+  border-color: var(--line-3);
+}
+
+.vis-toggle.on {
+  color: var(--fg-0);
+  background: var(--surface-3);
+  border-color: var(--line-3);
+}
+
+.vis-toggle canvas {
+  width: 90px;
+}
+
+/*
+ * Search.
+ *
+ * No width transition, and no width change either. The field was 216px at
+ * rest and 268px focused, and `transition: width` meant focusing it
+ * relaid out the entire header row — including the 40px heading beside
+ * it — for 220ms. Removing the transition only replaced a stutter with a
+ * jump, so the width is now fixed and focus is expressed as a border, a
+ * fill and a colour change, all of which are paint.
+ *
+ * If the field ever does need to grow, the composited way is a
+ * transform on an inner element or a grid-template-columns change with
+ * no transition at all — not `width`.
+ */
 .search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  width: 216px;
+  gap: var(--sp-3);
+  width: 232px;
   height: 32px;
-  padding: 0 9px;
+  padding: 0 var(--sp-5);
   border-radius: var(--r-full);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   border: 1px solid transparent;
   color: var(--fg-3);
   transition:
     border-color var(--fast) var(--ease),
     background var(--fast) var(--ease),
-    width var(--mid) var(--ease);
+    color var(--fast) var(--ease);
 }
 
 .search.focus {
-  width: 268px;
   border-color: var(--accent);
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--surface-3);
   color: var(--fg-1);
 }
 
 .search input {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   color: var(--fg-0);
   background: none;
   border: none;
@@ -109,7 +303,7 @@
 }
 
 .search input::placeholder {
-  color: var(--fg-3);
+  color: var(--fg-4);
 }
 
 .search button {
@@ -123,17 +317,18 @@
 }
 
 .library-tools .pill {
-  padding: 7px 14px;
-  font-size: 12.5px;
+  padding: var(--sp-3) var(--sp-6);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--surface-2);
   border: 1px solid var(--line-1);
   white-space: nowrap;
 }
 
 .library-tools .pill:hover:not(:disabled) {
   color: var(--fg-0);
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--surface-3);
 }
 
 .library-tools .pill:disabled {
@@ -141,20 +336,13 @@
   cursor: not-allowed;
 }
 
+/* The one sanctioned accent fill in this file: the primary play action. Sized
+   down from `.play-big` because it sits in a 44px-tall toolbar rather than on
+   a page header. */
 .play-big.sm {
-  width: 34px;
-  height: 34px;
-}
-
-.library-eq {
-  margin-top: 10px;
-  height: 34px;
-  opacity: 0.75;
-}
-
-.visualiser {
-  display: block;
-  width: 100%;
+  width: 38px;
+  height: 38px;
+  margin: 0;
 }
 
 /* --- boot and fatal --------------------------------------------------- */
@@ -166,12 +354,47 @@
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 12px;
+  gap: var(--sp-5);
   background: var(--bg-0);
   color: var(--fg-3);
-  font-size: 13px;
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
 }
 
+/*
+ * The fatal state.
+ *
+ * It was a 460px card with two identical `.pill` buttons stacked on top
+ * of each other with a 10px gap and no visual distinction whatsoever —
+ * a modal that asks you to choose and gives you nothing to choose
+ * between. It also had no scrim, so it read as a floating panel rather
+ * than a layer, and the app behind it stayed fully interactive and
+ * visible through the gap around it.
+ *
+ * Three fixes, all here rather than in App.tsx:
+ *
+ *   - A ::before scrim behind the card. It uses `position: absolute` with
+ *     negative insets rather than `position: fixed`, and that is not a
+ *     stylistic choice: `.fatal` is centred with `transform`, and a
+ *     transformed element becomes the containing block for any
+ *     `position: fixed` descendant, so a `fixed` scrim here would size
+ *     itself to the 460px card and cover nothing. The negative insets
+ *     reach past the window in every direction and are clipped back to it
+ *     by `.app { overflow: hidden }`, the only ancestor that clips.
+ *     `z-index: -1` puts it above the card's own background and below the
+ *     text, because a positioned pseudo with `z-index: auto` paints
+ *     *after* the in-flow content it is supposed to sit behind.
+ *   - The two actions are ranked. "Try again" is the primary: a filled
+ *     surface, the primary's weight. "Dismiss" is a ghost — outlined,
+ *     and quieter by design, because dismissing is the action you take
+ *     when you already know the answer.
+ *   - The card is a FILL STEP and not a fill-plus-border, per the border
+ *     rule in global.css. A 94%-opaque panel over a scrim is a floating
+ *     surface with nothing coplanar behind it, so a 6% border is a
+ *     second opinion about an edge the fill already draws. `.glass` is
+ *     the exception and it earns it, because its backdrop is scrolling
+ *     content.
+ */
 .fatal {
   position: absolute;
   top: 50%;
@@ -180,28 +403,87 @@
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
   align-items: flex-start;
   width: min(460px, 80vw);
-  padding: 22px 24px;
+  padding: var(--sp-8);
   border-radius: var(--r-xl);
+  /* Opaque, and an elevation step above the window rather than a fill: a modal
+     cannot be a --surface-* step, because those are translucent and the whole
+     point is that the content behind does not bleed through it. --bg-2 is two
+     steps up from --bg-0, and the scrim does the separating. */
+  background: var(--bg-2);
   box-shadow: var(--shadow-3);
 }
 
+.fatal::before {
+  content: "";
+  position: absolute;
+  top: -100vh;
+  left: -100vw;
+  right: -100vw;
+  bottom: -100vh;
+  z-index: -1;
+  background: var(--scrim);
+}
+
+/* A left rail rather than a coloured heading. The failure is a property
+   of the whole panel, so the red is a single 3px mark and the words stay
+   --fg-0: a fully red heading competes with the 33px page title behind
+   the scrim for the eye, and this panel is a message, not a headline. */
 .fatal strong {
-  font-size: 15px;
-  color: #ff9d9d;
+  display: block;
+  width: 100%;
+  padding-left: var(--sp-5);
+  border-left: 3px solid var(--danger);
+  font-size: var(--fs-lg);
+  line-height: var(--lh-lg);
+  font-weight: var(--fw-display);
+  color: var(--fg-0);
 }
 
 .fatal p {
   margin: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   color: var(--fg-1);
 }
 
-.fatal .pill {
-  padding: 7px 15px;
-  font-size: 12.5px;
-  background: rgba(255, 255, 255, 0.1);
+.fatal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-top: var(--sp-1);
+}
+
+/* Primary: a raised surface, not the accent. The accent is reserved for
+   the play action and the current track, and a failed rescan is neither,
+   so the primary is expressed by weight and fill instead. */
+.fatal-actions .pill {
+  padding: var(--sp-3) var(--sp-7);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: var(--fw-strong);
+  color: var(--fg-0);
+  background: var(--surface-3);
+  border: 1px solid transparent;
+}
+
+.fatal-actions .pill:hover {
+  background: var(--surface-4);
+}
+
+/* Ghost: outlined and one step quieter. Dismissing is the action you take
+   when the message is already understood, and it should not look like
+   the thing the modal is asking for. */
+.fatal-actions .pill.ghost {
+  color: var(--fg-2);
+  background: none;
+  border-color: var(--line-2);
+}
+
+.fatal-actions .pill.ghost:hover {
+  color: var(--fg-0);
+  background: var(--surface-2);
+  border-color: var(--line-3);
 }

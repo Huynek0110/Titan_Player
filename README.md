@@ -22,7 +22,8 @@ installer.
   all of which decode natively in Electron, so there is no bundled codec
 - Artist, album, year, genre, track and disc numbers, bitrate, sample rate,
   channel count, file size, and lossless flag
-- Search across title, artist and album; sort by any field, ascending or
+- Search across title, artist, album, genre, year and track number, ignoring
+  diacritics, so `muoi` finds `Mười`; sort by any field, ascending or
   descending; play count, duration and album views
 
 **Artwork and colour**
@@ -38,11 +39,14 @@ installer.
 - Read from the file's own tags, and from a `.lrc` file sitting beside it
 - Understands `LYRICS`, `UNSYNCEDLYRICS` and `SYNCEDLYRICS` Vorbis comments,
   plus ID3 `USLT` and `SYLT` frames
-- Parses plain LRC **and** word-level "enhanced" LRC
+- Parses plain LRC and word-level "enhanced" LRC
 - A karaoke fill that sweeps continuously through the active line, including
   across wrapped lines, with no per-word DOM
+- When a file *does* carry word-level timings, the fill follows the words rather
+  than sweeping the line at a constant rate
 - Click any line to seek to it; auto-scroll suspends while you scroll and
   resumes on its own
+- Nudge the timing forward or back when a file's sync is off
 - Falls back to a readable plain-text view when there is no timing data
 - Load an external `.lrc` from anywhere without touching the audio file
 
@@ -55,13 +59,15 @@ installer.
 - Frequency-bar visualiser driven from a Web Audio analyser
 - Track details panel: full technical readout of the current file
 - Keyboard: `Space` play/pause, `Shift+←/→` seek, `↑/↓` volume, `/` search,
-  `Q` queue, `S` settings, `L` library, `Esc` close
+  `Q` queue, `S` settings, `L` library. `Esc` closes the queue panel and the
+  now-playing view; it does nothing on the library itself.
 
 **Playlists**
 
-- Create, rename, delete
+- Create, rename, duplicate, delete
 - Drag rows to reorder, or remove tracks from a playlist
 - Favourites, kept separately from playlists
+- Hide a track from the library views without losing it from a playlist
 - Everything persists across restarts
 
 ---
@@ -93,8 +99,9 @@ You end up with:
 
 ```
 release/
-├── Titan Player-0.1.0-setup.exe      # NSIS installer
-└── Titan Player-0.1.0-portable.exe   # standalone, no install
+├── titan-player-0.1.0-setup.exe      # NSIS installer
+├── titan-player-0.1.0-portable.exe   # standalone, no install
+└── win-unpacked/                     # unpacked directory, same code as the above
 ```
 
 Or just the unpacked app directory, which is the fastest way to check a build:
@@ -162,16 +169,23 @@ WebAssembly something Chromium already does in C++.
 
 - **Word-level lyric timing is rare in local files.** FLAC stores lyrics as LRC
   text in a Vorbis comment, which is line-level only. Word timing needs
-  "enhanced" LRC, which few taggers write. Where it is present it is used;
-  otherwise the fill is distributed across the line.
+  "enhanced" LRC, which few taggers write. Where it is present the fill follows
+  the words; otherwise the fill is distributed across the line. The line-level
+  path is the guarantee, not a fallback.
 - **A malformed cover-art block can make a FLAC unplayable.** Chromium's FLAC
   demuxer rejects the whole file when a `METADATA_BLOCK_PICTURE` block has a bad
   MIME type, even though the audio is fine. The player surfaces this as an
   error rather than failing silently.
 - Tracks are re-read on every scan. There is no incremental cache, so scanning a
   very large library takes a few seconds each time.
-- No gapless playback or crossfade.
+- No gapless playback or crossfade. There is an audible gap between tracks, and
+  the first fraction of a second of each is spent seeking.
+- No loudness normalisation. `REPLAYGAIN` and `R128` tags are neither read nor
+  applied, so switching between a quiet folk recording and a loud EDM master at a
+  fixed volume is as uneven here as it is in any player without the feature.
 - No scrobbling, no online lyrics lookup, no audio equaliser.
+- Duplicate files across folders are not detected. Two copies of the same album in
+  two folders appear as two albums.
 
 ---
 

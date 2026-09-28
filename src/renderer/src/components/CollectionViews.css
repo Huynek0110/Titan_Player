@@ -1,11 +1,35 @@
+.collection {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.collection-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* The grid gives up the lion's share of the height when a group is open, so
+     the detail pane underneath is the one you are looking at. */
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.collection.with-detail .collection-grid-wrap {
+  flex: 0 1 40%;
+}
+
 .collection-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 22px 18px;
-  padding: 22px 24px 28px;
+  /* Vertical gap is small because `.card` carries 20px of top padding to make
+     room for its own clipped drop shadow. Together they come to 26px. */
+  gap: 6px 18px;
+  padding: 8px 24px 28px;
   overflow-y: auto;
   min-height: 0;
   flex: 1;
+  align-content: start;
 }
 
 .card {
@@ -13,6 +37,50 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /*
+   * Second layer of protection for a large library. A grid is not windowed the
+   * way the track list is, so on a machine with thousands of albums this is what
+   * keeps the offscreen cards from costing layout and paint. The intrinsic size
+   * matches a card's real box so resolving one cannot reflow the row.
+   *
+   * `content-visibility` implies paint containment, which clips a card to its own
+   * box — so the padding below is load-bearing, not decoration. Without it the
+   * artwork's 26px drop shadow is sliced off flat at the top of the card, which
+   * reads as a rendering bug rather than a shadow. The outer halo is still
+   * trimmed; the dense part of the falloff is what the padding holds.
+   */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 252px;
+  padding-top: 20px;
+}
+
+/*
+ * The entrance is capped to the first two screenfuls. It used to run on every
+ * card at once, so a 3000-album library started 3000 animations and 3000 image
+ * requests on the same frame — the animation being invisible on the 2900 that
+ * are not on screen, and the images being the expensive part either way.
+ */
+.card:nth-child(-n + 24) {
+  /* Cards settle in with a slight rise. Transform only, so it stays on the
+     compositor and a long grid does not reflow while it plays. */
+  animation: card-in 300ms var(--ease) both;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card:nth-child(-n + 24) {
+    animation: none;
+  }
 }
 
 .card-hit {
@@ -23,8 +91,6 @@
   min-width: 0;
   text-align: left;
   border-radius: var(--r-lg);
-  padding: 6px;
-  margin: -6px;
   transition: background var(--mid) var(--ease);
 }
 
@@ -32,22 +98,51 @@
   background: rgba(255, 255, 255, 0.055);
 }
 
+/*
+ * `align-self: start` sizes a flex child on the cross axis, which here is the
+ * horizontal one, so the artist card's only in-flow content — a `::before` with
+ * percentage padding, which contributes no intrinsic width — collapsed the box
+ * to zero and the circular artwork rendered at 0x0. Stretch, and let the album
+ * case opt back out.
+ */
 .card-art {
   position: relative;
-  align-self: start;
+  align-self: stretch;
+  width: 100%;
 }
 
 .card-art .artwork {
   border-radius: var(--r-lg);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42);
-  transition: box-shadow var(--mid) var(--ease);
+  /* No shadow here: the base in Artwork.css scales it from the artwork's own
+     size, and this hand-picked value was overriding rather than adding to it. */
 }
 
-.card-hit:hover .card-art .artwork {
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+/*
+ * A flat white wash over the cover, rather than a second box-shadow. The
+ * box-shadow version re-rastered a 168px image on every frame the transition
+ * ran; an opacity on a sibling pseudo-element is a compositor-only change and
+ * costs nothing per frame.
+ */
+.card-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  /* Matches the artwork, not `inherit` — `.card-art` itself has no radius, so
+     `inherit` would resolve to `none` and square the wash off over a rounded
+     cover. */
+  border-radius: var(--r-lg);
+  background: #fff;
+  opacity: 0;
+  transition: opacity var(--mid) var(--ease);
+  pointer-events: none;
 }
 
-/* A round play button that rises over the cover, Spotify-style. */
+.card-hit:hover .card-art::after {
+  opacity: 0.06;
+}
+
+/* A round play button that rises over the cover, Spotify-style. It doubles as
+   the chevron that says "this one is open". */
 .card-play {
   position: absolute;
   right: 8px;
@@ -68,7 +163,8 @@
 }
 
 .card-hit:hover .card-play,
-.card-hit:focus-visible .card-play {
+.card-hit:focus-visible .card-play,
+.card.expanded .card-play {
   opacity: 1;
   transform: none;
 }
@@ -83,22 +179,36 @@
   gap: 2px;
   min-width: 0;
   padding: 0 2px;
+  /*
+   * Pinned to two lines. The title and subtitle are both truncated to one line
+   * each, but a title that happens to fit on a narrower card and one that wraps
+   * to two produced cards of different heights and a ragged gap in every row
+   * that contained one. `1lh`-free by hand so the two sizes cannot drift apart:
+   * the tall line is the subtitle's, since the title's font-size is larger.
+   */
+  height: 34px;
+  justify-content: flex-start;
 }
 
 .card-title {
   font-size: 13.5px;
   font-weight: 600;
+  line-height: 16px;
   color: var(--fg-0);
 }
 
 .card-sub {
   font-size: 12px;
+  line-height: 16px;
   color: var(--fg-2);
 }
 
+/* Matches .card-text's 2px inset. At 8px the album name and its track count
+   were visibly out of line with each other by 6px. */
 .card-meta {
-  padding: 0 8px;
+  padding: 0 2px;
   font-size: 11px;
+  line-height: 14px;
   color: var(--fg-3);
   font-variant-numeric: tabular-nums;
 }
@@ -126,16 +236,165 @@
   height: 100%;
 }
 
+.collection-grid.artists .card-art::after {
+  /* The wash has to follow the circle, not the square it sits on. */
+  border-radius: var(--r-full);
+}
+
+/* --- drill-down --------------------------------------------------------- */
+
+.collection-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* 60% of the column once a group is open. Enough rows to browse without
+     scrolling the grid off the screen entirely. */
+  flex: 1 1 60%;
+  border-top: 1px solid var(--line-2);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.014), transparent 120px);
+}
+
+.collection-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  padding: 16px 24px 14px;
+}
+
+.detail-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  color: var(--fg-2);
+  background: rgba(255, 255, 255, 0.07);
+  transition:
+    color var(--fast) var(--ease),
+    background var(--fast) var(--ease);
+}
+
+.detail-close:hover {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.detail-art {
+  flex-shrink: 0;
+}
+
+.detail-art .artwork.round {
+  border-radius: var(--r-full);
+}
+
+.detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.detail-kind {
+  font-size: 10.5px;
+  font-weight: 660;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.detail-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 25px;
+  font-weight: 780;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  color: var(--fg-0);
+}
+
+.detail-stats {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+
+/*
+ * Sized here rather than borrowed from `.play-big.sm`, which lives in App.css.
+ * Cascade order between component stylesheets is an accident of import order in
+ * App.tsx, and this pane should not change size because someone reordered those
+ * imports.
+ */
+.detail-actions .detail-play {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: var(--r-full);
+  color: var(--accent-fg);
+  background: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition:
+    transform var(--fast) var(--ease),
+    opacity var(--fast) var(--ease);
+}
+
+.detail-actions .detail-play:hover:not(:disabled) {
+  transform: scale(1.06);
+}
+
+.detail-actions .detail-play:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.detail-actions .pill {
+  padding: 7px 14px;
+  font-size: 12.5px;
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line-1);
+}
+
+.detail-actions .pill:hover:not(:disabled) {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.detail-actions .pill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* --- empty -------------------------------------------------------------- */
+
 .collection-empty {
   flex: 1;
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 12px;
+  gap: 10px;
   color: var(--fg-3);
 }
 
 .collection-empty p {
   margin: 0;
   font-size: 13.5px;
+}
+
+.collection-empty-hint {
+  font-size: 12.5px;
+  color: var(--fg-3);
+  opacity: 0.8;
 }

@@ -3,18 +3,65 @@
   aspect-ratio: 1;
   border-radius: var(--r-md);
   overflow: hidden;
-  background: linear-gradient(145deg, hsl(var(--hue) 32% 22%), hsl(var(--hue) 26% 13%));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  /* A single neutral plate. The placeholder used to hash the track id into one
+     of 360 hues, so a library of untagged files rendered as a rainbow of
+     coloured squares that carried no information and fought the artwork-driven
+     accent. */
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02));
   flex-shrink: 0;
+
+  /*
+   * One drop shadow, scaled from the art's own size.
+   *
+   * The shadow used to be declared per surface: 0 4px 14px on a 44px track
+   * thumbnail, 0 8px 26px at 68px, 0 10px 26px at 168px, 0 30px 80px at 420px.
+   * Four hand-picked values for one idea, none of them related to each other, so
+   * the small tiles looked like they had a grey halo while the hero cover looked
+   * pasted onto the window. `Artwork` publishes its size as `--art-size` and the
+   * depth follows, which means every surface in the app can delete its own
+   * declaration and still get a shadow that belongs to the same family.
+   *
+   * Not transitioned. A box-shadow transition repaints the element every frame,
+   * and CollectionViews hovered its cards with one.
+   */
+  --art-shadow-y: calc(var(--art-size, 48px) * 0.1);
+  --art-shadow-blur: calc(var(--art-size, 48px) * 0.28);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 var(--art-shadow-y) var(--art-shadow-blur) rgba(0, 0, 0, 0.55);
 }
 
+/*
+ * Both the image and the monogram are absolutely positioned, so the two are
+ * painted in DOM order rather than by one being in flow. The image is last, so it
+ * fades up over the monogram instead of the monogram having to be removed from
+ * underneath a still-transparent image.
+ */
 .artwork img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
-  /* Cover art is often low-resolution; a touch of sharpening reads better. */
-  image-rendering: auto;
+  /* Resolve in from slightly soft and transparent. An untransitioned image in a
+     library of hundreds is the most visible missing bit of motion there is.
+     The blur is the sanctioned exception to the no-filter-motion rule: it runs
+     once per resolved image, it does not loop, and a 34px thumbnail is the
+     smallest thing in the window. */
+  opacity: 0;
+  filter: blur(7px);
+  transform: scale(1.04);
+  transition:
+    opacity 260ms var(--ease),
+    filter 340ms var(--ease),
+    transform 340ms var(--ease);
+}
+
+.artwork img.resolved {
+  opacity: 1;
+  filter: none;
+  transform: none;
 }
 
 .artwork-fallback {
@@ -22,26 +69,34 @@
   inset: 0;
   display: grid;
   place-items: center;
-  color: hsl(var(--hue) 45% 72%);
-  opacity: 0.85;
-}
-
-/* The monogram sits large and faint behind the note, like etched vinyl. */
-.artwork-monogram {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-family: var(--font-display);
-  font-size: 2.1em;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  color: hsl(var(--hue) 40% 78%);
-  opacity: 0.14;
+  color: var(--fg-3);
+  /* Rows are clickable and draggable; the placeholder must not eat the pointer
+     or become the drag image. */
   pointer-events: none;
-  line-height: 1;
+  transition: opacity var(--mid) var(--ease);
 }
 
-.artwork-fallback svg {
-  opacity: 0.5;
+.artwork-fallback.hidden {
+  opacity: 0;
+}
+
+/*
+ * One glyph, sized from the box rather than at a fixed em. The note and the
+ * monogram used to render at the same time in the same cell, which overlapped
+ * into a smudge at 34px and left a note floating inside a giant ghost letter at
+ * 420px. The monogram alone is the recognisable part.
+ *
+ * 34% works at both ends of the range because a cap height is about 0.7em: the
+ * letter lands at roughly a quarter of the box at 34px and at 420px alike, which
+ * is the proportion a monogram wants at any size. A percentage is doing real
+ * work here, so resist replacing it with a token.
+ */
+.artwork-monogram {
+  font-family: var(--font-display);
+  font-size: 34%;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--fg-3);
+  opacity: 0.75;
 }

@@ -1,9 +1,21 @@
+/*
+ * The page header here is `24px 26px 22px` and `.library-head` in App.css is a
+ * different set of numbers for the same region in the same role, so switching
+ * between All Songs and a playlist moved the heading down the window.
+ *
+ * This previously declared its own `--head-pad-*` tokens, which closed the gap
+ * by standardising on the *library's* old values and hardcoding 26px against a
+ * 24px gutter — one wrong answer instead of two, and still two. The tokens are
+ * now the app-wide ones in global.css: `--page-pad-t`, `--gutter`,
+ * `--page-pad-b`.
+ */
+
 .playlist-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
-  gap: 24px;
-  padding: 24px 26px 22px;
+  gap: var(--sp-9);
+  padding: var(--page-pad-t) var(--gutter) var(--page-pad-b);
   flex-shrink: 0;
 }
 
@@ -11,19 +23,21 @@
   flex-shrink: 0;
 }
 
+/*
+ * A user-made playlist has no artwork, and a large saturated gradient square
+ * pretending otherwise is decoration masquerading as identity. A quiet neutral
+ * plate lets the playlist's name be the thing that identifies it, which is what
+ * every other music player does.
+ */
 .playlist-swatch {
   display: grid;
   place-items: center;
-  width: 152px;
-  height: 152px;
+  width: 148px;
+  height: 148px;
   border-radius: var(--r-lg);
-  color: rgba(255, 255, 255, 0.9);
-  background: linear-gradient(150deg, var(--accent), color-mix(in oklab, var(--accent) 45%, #000));
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
-}
-
-.playlist-swatch.fav {
-  background: linear-gradient(150deg, #ec4899, #7c3aed);
+  color: var(--fg-3);
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 0 0 1px var(--line-1);
 }
 
 .playlist-head-body {
@@ -68,12 +82,15 @@
 .play-big {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
+  width: var(--play-btn, 46px);
+  height: var(--play-btn, 46px);
   border-radius: var(--r-full);
   color: #fff;
   background: var(--accent);
-  box-shadow: 0 10px 28px color-mix(in oklab, var(--accent) 40%, transparent);
+  /* Neutral, like `.play-toggle`. A 28px accent blur around a 54px circle
+     reads as a halo rather than as elevation, and the accent is the one thing
+     that should not be doubled up on a surface. */
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.45);
   transition:
     transform var(--fast) var(--ease),
     opacity var(--fast) var(--ease);

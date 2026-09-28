@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { Lyrics } from "@shared/types"
 import { useStore } from "./state/store"
 import { usePlayer } from "./lib/usePlayer"
 import { extractPalette, applyPalette } from "./lib/palette"
@@ -16,7 +17,7 @@ import PlaylistView from "./components/PlaylistView"
 import QueuePanel from "./components/QueuePanel"
 import Settings from "./components/Settings"
 import Visualiser from "./components/Visualiser"
-import { Close, Search, Shuffle, Play, Music } from "./components/Icons"
+import { Close, Search, Shuffle, Play, Music, Info } from "./components/Icons"
 import "./App.css"
 
 export default function App() {
@@ -26,6 +27,10 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const player = usePlayer(audioRef)
   const [searchFocused, setSearchFocused] = useState(false)
+  // The visualiser is off until asked for, because enabling it routes audio
+  // through Web Audio and a suspended context would silence playback.
+  const [visOn, setVisOn] = useState(false)
+  const [visFailed, setVisFailed] = useState(false)
 
   // The lyrics sweep must sample the audio clock every animation frame, so it
   // reads the element directly rather than the `timeupdate`-driven state, which
@@ -78,45 +83,65 @@ export default function App() {
   }, [store])
 
   // --- external .lrc loading --------------------------------------------
+  // Lyrics loaded from a file, keyed by track id.
+  //
+  // This is state rather than a mutation of `currentTrack`. Assigning straight
+  // onto the track object left `lines` as the same array reference, so
+  // LyricsPane's effects — which correctly depend on `lines` — never re-ran and
+  // the karaoke sweep kept using the stale closure. The old code also nudged a
+  // re-render by dispatching a same-value search update, and gated the assignment
+  // so that a track which already had synced lyrics silently ignored the file
+  // the user had just picked in order to correct them.
+  const [lyricOverride, setLyricOverride] = useState<{ id: string; lyrics: Lyrics } | null>(null)
+
   const loadLyricsFile = useCallback(async () => {
     if (!currentTrack) return
     const picked = await window.titan.pickLyricsFile()
     if (!picked) return
+
     const parsed = parseLrc(picked.content)
-    // Hand the parsed lines to the pane by stashing them on the track object
-    // the renderer already holds; the main process never needs to know.
-    if (currentTrack.lyrics.source === "none" || !currentTrack.lyrics.synced) {
-      currentTrack.lyrics = {
-        synced: parsed.synced,
-        lines: parsed.lines,
-        plain: parsed.plain ?? picked.content,
-        source: "lrc-sidecar",
-      }
-      // Nudge React to notice the mutation.
-      store.setNowPlaying(true)
-      store.setSearch(store.search)
+    if (parsed.synced) {
+      setLyricOverride({
+        id: currentTrack.id,
+        lyrics: { synced: true, lines: parsed.lines, source: "lrc-sidecar" },
+      })
+    } else {
+      // Still useful: a plain text file beats showing nothing.
+      setLyricOverride({
+        id: currentTrack.id,
+        lyrics: { synced: false, lines: [], plain: parsed.plain ?? picked.content, source: "lrc-sidecar" },
+      })
     }
-  }, [currentTrack, store])
+  }, [currentTrack])
+
+  const lyrics =
+    lyricOverride && lyricOverride.id === currentTrack?.id ? lyricOverride.lyrics : currentTrack?.lyrics
 
   // --- content routing ---------------------------------------------------
   const body = useMemo(() => {
     switch (view) {
       case "albums":
-        return <CollectionViews kind="albums" />
+        // Keyed deliberately. Both views render the same component, and React
+        // reconciles same-type siblings as one instance, so without a key the
+        // card entrance animation played on the way into Albums and then never
+        // replayed on the way into Artists. The key is on the child, not on
+        // `.app-content` — keying the shell would remount the sidebar's search
+        // field and lose its text and scroll position on every view change.
+        return <CollectionViews key="albums" kind="albums" />
       case "artists":
-        return <CollectionViews kind="artists" />
+        return <CollectionViews key="artists" kind="artists" />
       case "playlist":
         return activePlaylistId ? (
           <PlaylistView playlistId={activePlaylistId} />
         ) : (
-          <TrackList tracks={store.visibleTracks} />
+          <TrackList tracks={store.visibleTracks} isPlaying={player.state.isPlaying} />
         )
       case "settings":
-        return <Settings />
+        return <Settings failedFiles={store.failed} />
       default:
-        return <TrackList tracks={store.visibleTracks} />
+        return <TrackList tracks={store.visibleTracks} isPlaying={player.state.isPlaying} />
     }
-  }, [view, activePlaylistId, store.visibleTracks, store.search])
+  }, [view, activePlaylistId, store.visibleTracks, store.search, player.state.isPlaying])
 
   const heading = useMemo(() => {
     switch (view) {
@@ -152,7 +177,12 @@ export default function App() {
       <audio ref={audioRef} preload="metadata" />
 
       <div className="app-shell">
-        <TitleBar title={heading} />
+        {/* No `title` prop: the wordmark is the app's identity, not a copy of the
+            page heading. Passing the heading put the same string in the chrome at
+            10px and 40px below it at 33px, and because the heading changes with
+            every view, the text you read while dragging the window was
+            constantly in motion. */}
+        <TitleBar />
 
         <div className="app-body">
           <Sidebar />
@@ -203,15 +233,64 @@ export default function App() {
                     >
                       <Play size={17} />
                     </button>
+
+                    {currentTrack && (
+                      <button
+                        className={`vis-toggle ${visOn ? "on" : ""}`}
+                        // The click is the user gesture the AudioContext needs,
+                        // which is the only way resume() is guaranteed to work.
+                        onClick={async () => {
+                          const ok = await player.enableVisualiser()
+                          setVisOn(ok)
+                          setVisFailed(!ok)
+                        }}
+                        title={
+                          visFailed
+                            ? "Audio could not be routed to the visualiser"
+                            : visOn
+                              ? "Hide the visualiser"
+                              : "Show the visualiser"
+                        }
+                        aria-pressed={visOn}
+                      >
+                        {visOn ? (
+                          <Visualiser
+                            getAnalyser={player.getAnalyser}
+                            active
+                            height={22}
+                            onUnavailable={() => setVisFailed(true)}
+                          />
+                        ) : (
+                          "Bars"
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                {currentTrack && player.state.isPlaying && (
-                  <div className="library-eq">
-                    <Visualiser getAnalyser={player.ensureAnalyser} active height={34} />
-                  </div>
-                )}
               </header>
+            )}
+
+            {/*
+              * A folder the user configured could not be reached, so the scan
+              * deliberately did not prune playlists or favourites. That is the
+              * one condition where the library on screen is knowingly out of date
+              * with the disk, so it is stated here rather than only in Settings —
+              * otherwise the user reconnects a drive, finds half their playlists
+              * apparently emptied, and has no idea why.
+              */}
+            {store.scanError && (
+              <div className="scan-warning" role="status">
+                <Info size={15} />
+                <span>{store.scanError}</span>
+                <button
+                  className="scan-warning-dismiss"
+                  onClick={store.clearScanError}
+                  aria-label="Dismiss"
+                  title="Dismiss"
+                >
+                  <Close size={13} />
+                </button>
+              </div>
             )}
 
             <div className="app-content">{body}</div>
@@ -225,7 +304,7 @@ export default function App() {
 
       {nowPlayingOpen && currentTrack && (
         <NowPlaying
-          track={currentTrack}
+          track={{ ...currentTrack, lyrics: lyrics ?? currentTrack.lyrics }}
           player={player}
           isFavourite={store.favourites.has(currentTrack.id)}
           onToggleFavourite={() => void store.toggleFavourite(currentTrack.id)}
@@ -234,12 +313,12 @@ export default function App() {
           onReveal={() => void window.titan.revealInExplorer(currentTrack.path)}
         >
           <LyricsPane
-            lines={currentTrack.lyrics.lines}
-            plain={currentTrack.lyrics.plain}
+            lines={lyrics?.lines ?? currentTrack.lyrics.lines}
+            plain={lyrics?.plain ?? currentTrack.lyrics.plain}
             getTime={getTime}
             isPlaying={player.state.isPlaying}
             onSeek={player.seek}
-            hasAny={currentTrack.lyrics.source !== "none"}
+            hasAny={(lyrics ?? currentTrack.lyrics).source !== "none"}
           />
         </NowPlaying>
       )}

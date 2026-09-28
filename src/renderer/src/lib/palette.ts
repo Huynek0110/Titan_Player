@@ -151,6 +151,16 @@ export function extractPalette(dataUrl: string | null | undefined): Promise<Pale
 
   return new Promise<Palette>((resolve) => {
     const image = new Image()
+    /*
+     * Required, and easy to miss. `media://` is a different origin from both
+     * `file://` (packaged) and `http://localhost` (dev), so without this the
+     * image loads in no-cors mode, the canvas stays tainted, and `getImageData`
+     * throws a SecurityError. The `access-control-allow-origin` header on the
+     * response and the scheme's `corsEnabled` privilege are both necessary but
+     * neither is sufficient on their own: they only matter for a CORS-mode
+     * request, which is exactly what this attribute turns it into.
+     */
+    image.crossOrigin = "anonymous"
     image.onload = () => {
       try {
         const size = 64
@@ -179,14 +189,66 @@ export function extractPalette(dataUrl: string | null | undefined): Promise<Pale
   })
 }
 
+/**
+ * Alpha for a full-viewport wash, scaled by how strong the colour is.
+ *
+ * A fixed alpha cannot work here, because the input is arbitrary artwork. The
+ * wash was tuned against the default purple, and a desaturated violet at 20%
+ * over near-black is a faint tint. A saturated red at the same 20% is a
+ * different picture entirely: it floods the whole window, tints the sidebar and
+ * the track list alike, and pushes the near-neutral surfaces the design depends
+ * on toward a colour cast. The result read as a red filter laid over the app
+ * rather than as light in a room.
+ *
+ * So the alpha is computed. Luminance and saturation both matter: a near-black
+ * cover has nothing to tint with, and a fully saturated one needs the most
+ * restraint. The output is capped well below the old fixed value because this
+ * gradient covers the entire viewport, not a panel.
+ */
+function washAlpha(hex: string, max: number): number {
+  const clean = hex.replace("#", "")
+  const r = parseInt(clean.slice(0, 2), 16) / 255
+  const g = parseInt(clean.slice(2, 4), 16) / 255
+  const b = parseInt(clean.slice(4, 6), 16) / 255
+
+  const maxCh = Math.max(r, g, b)
+  const minCh = Math.min(r, g, b)
+  const chroma = maxCh === 0 ? 0 : (maxCh - minCh) / maxCh
+  // Perceived brightness, so a dark cover contributes almost nothing.
+  const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+  // sqrt keeps a mid-saturation colour from being cut too hard while still
+  // pulling a fully saturated one well down.
+  const strength = Math.sqrt(chroma) * (0.35 + 0.65 * luma)
+  const alpha = max * Math.min(1, strength)
+  return Math.round(Math.max(0, Math.min(max, alpha)) * 255)
+}
+
+/** `#rrggbb` plus a computed alpha byte, as the 8-digit hex CSS wants. */
+function tinted(hex: string, max: number): string {
+  return `${hex}${washAlpha(hex, max).toString(16).padStart(2, "0")}`
+}
+
 /** Write a palette into CSS custom properties on the document root. */
 export function applyPalette(palette: Palette): void {
   const root = document.documentElement
+  const [a, b, c] = palette.supports
+
   root.style.setProperty("--accent", palette.primary)
-  root.style.setProperty("--accent-soft", `${palette.primary}28`)
-  root.style.setProperty("--amb-1", `${palette.primary}4d`)
-  root.style.setProperty("--amb-2", `${palette.supports[0]}2b`)
-  root.style.setProperty("--amb-3", `${palette.supports[1]}1f`)
+  root.style.setProperty("--accent-soft", `${palette.primary}2e`)
+
+  // Restrained on purpose, and restrained *per colour* — see washAlpha. The
+  // interface stays near-neutral and the accent is spent where it means
+  // something; flooding every surface with the artwork's hue is what makes an
+  // interface look generated rather than designed.
+  root.style.setProperty("--amb-1", tinted(palette.primary, 0.13))
+  root.style.setProperty("--amb-2", tinted(a, 0.1))
+  root.style.setProperty("--amb-3", tinted(b, 0.08))
+
+  // The bloom is a tighter gradient behind the hero artwork, where it reads as
+  // light falling off an object. It can afford more than the full-window wash.
+  root.style.setProperty("--glow-1", tinted(palette.primary, 0.3))
+  root.style.setProperty("--glow-2", tinted(c, 0.2))
 }
 
 /** Pick black or white text for a background colour, by relative luminance. */

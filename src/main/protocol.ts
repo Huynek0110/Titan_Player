@@ -1,6 +1,7 @@
-import { app, net, protocol } from "electron"
+import { net, protocol } from "electron"
 import { pathToFileURL } from "node:url"
 import path from "node:path"
+import { DEFAULT_EXTENSIONS } from "../shared/types.js"
 
 /**
  * A privileged `media://` scheme serving cover art and audio bytes.
@@ -27,12 +28,33 @@ const covers = new Map<string, CoverEntry>()
 /** Absolute paths a user has explicitly added. Audio outside these is refused. */
 const audioRoots = new Set<string>()
 
-/** Audio extensions the jail will serve, so a root cannot be used to read
- *  arbitrary files that happen to live under it. */
-const AUDIO_EXT = new Set([
-  ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".oga", ".opus",
-  ".wav", ".wma", ".aiff", ".aif", ".ape", ".wv", ".mp4",
-])
+/**
+ * Extensions the jail will serve.
+ *
+ * The jail's purpose is that a music root cannot be used to read arbitrary files
+ * that happen to live under it, so it needs an allowlist. It starts from the
+ * shared default and is then widened by whatever the user has configured, because
+ * the extension list is editable in Settings and the scanner honours it: a
+ * hardcoded list meant that adding `.m4b` produced tracks that appeared in the
+ * library and then failed every play with a 403, which surfaces as a confident
+ * and completely wrong "unsupported format" message.
+ *
+ * Only a leading dot and alphanumeric characters are accepted, so a
+ * misconfigured value cannot turn the allowlist into a wildcard.
+ */
+let audioExt = new Set(DEFAULT_EXTENSIONS.map((e) => e.toLowerCase()))
+
+function setAudioExtensions(extensions: readonly string[]): void {
+  const next = new Set<string>()
+  for (const raw of extensions) {
+    const ext = raw.trim().toLowerCase()
+    if (!/^\.[a-z0-9]{1,8}$/.test(ext)) continue
+    next.add(ext)
+  }
+  // Never let a bad configuration empty the allowlist, which would make the app
+  // unable to play anything at all.
+  audioExt = next.size > 0 ? next : new Set(DEFAULT_EXTENSIONS)
+}
 
 export function publishCover(trackId: string, entry: CoverEntry): void {
   covers.set(trackId, entry)
@@ -54,6 +76,15 @@ export function setAudioRoots(roots: string[]): void {
 }
 
 /**
+ * Update the served extension list. Called with the user's configured
+ * extensions at every scan, so the jail and the scanner never disagree about
+ * what counts as a track.
+ */
+export function configureAudioExtensions(extensions: readonly string[]): void {
+  setAudioExtensions(extensions)
+}
+
+/**
  * Whether `target` sits inside one of the trusted roots.
  *
  * The comparison is case-insensitive because `path.win32.relative` folds
@@ -63,7 +94,7 @@ export function setAudioRoots(roots: string[]): void {
  */
 function isAllowedAudio(target: string): boolean {
   const resolved = path.resolve(target)
-  if (!AUDIO_EXT.has(path.extname(resolved).toLowerCase())) return false
+  if (!audioExt.has(path.extname(resolved).toLowerCase())) return false
 
   const lowered = resolved.toLowerCase()
   for (const root of audioRoots) {
@@ -155,16 +186,9 @@ export function handleMediaProtocol(): void {
   })
 }
 
-/** URL builders exposed to the renderer. Strings only, no fs handles. */
-export function audioUrl(absolutePath: string): string {
-  return `media://audio/${encodeURIComponent(absolutePath)}`
-}
-
-export function coverUrl(trackId: string): string {
-  return `media://cover/${encodeURIComponent(trackId)}`
-}
-
-/** The Windows Music folder, resolved once so the audio jail can include it. */
-export function defaultAudioRoot(): string {
-  return app.getPath("music")
-}
+/*
+ * No URL builders live here. The preload bridge builds both URLs itself, from
+ * plain strings, so the renderer never needs a handle into this module and the
+ * scheme's shape has exactly one definition. Duplicating them in the main
+ * process meant two places to keep in step and neither was imported.
+ */

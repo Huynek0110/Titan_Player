@@ -22,7 +22,10 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
-  icon: build/icon.svg
+  # A 1024x1024 PNG. electron-builder generates the multi-resolution .ico from
+  # it, and an SVG is not accepted for a Windows target at all — the build
+  # silently falls back to the default Electron icon if you point at one.
+  icon: build/icon.png
   executableName: titan-player
   # asInvoker means the app never asks for elevation. A music player has no
   # business running as administrator.
