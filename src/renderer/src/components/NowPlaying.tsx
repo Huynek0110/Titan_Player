@@ -437,8 +437,29 @@ export default function NowPlaying({
 
   const coverUrl = track.hasArtwork ? window.titan.coverUrl(track.id, true) : null
 
+  /*
+   * The lyric type scale, derived from the column width rather than fixed.
+   *
+   * The column is whatever is left after a 420px cover, the volume rail and the
+   * gap, so it is much narrower in a small window than a wide one. A fixed 40px
+   * current line then wrapped a Vietnamese lyric onto two rows, and two rows for
+   * the current line breaks the rhythm of the whole block — it reads as the line
+   * coming apart rather than as a long lyric.
+   *
+   * So the size is solved from the width. Roughly 40 characters fit on one row at
+   * about 0.55em average advance for this face, which gives the divisor. Clamped
+   * so a very narrow window still produces a readable lyric and a wide one stops
+   * at the size the design actually wants. The two supporting lines are ratios of
+   * it, so the hierarchy survives any width.
+   */
+  const lyricSize = Math.round(
+    Math.max(28, Math.min(40, infoWidth / 40 / 0.55)),
+  )
   const gridStyle = {
     "--np-info": `${infoWidth}px`,
+    "--lyric-size": `${lyricSize}px`,
+    "--lyric-next": `${Math.round(lyricSize * 0.65)}px`,
+    "--lyric-far": `${Math.round(lyricSize * 0.53)}px`,
   } as CSSProperties
 
   const RepeatGlyph = repeat === "one" ? RepeatOne : Repeat

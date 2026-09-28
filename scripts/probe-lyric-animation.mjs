@@ -141,7 +141,14 @@ while (Date.now() - started < 22000) {
       hasExit: Boolean(exit),
       exitText: exit ? exit.innerText.trim().slice(0, 24) : null,
       exitOpacity: exit ? getComputedStyle(exit).opacity : null,
+      // The filter is what the exit actually animates now. The line dissolves in
+      // place rather than travelling, so the transform stays "none" throughout,
+      // and sampling only that would report a line that appeared and vanished
+      // without any visible change. The box is sampled too, to prove it holds
+      // still.
+      exitFilter: exit ? getComputedStyle(exit).filter : null,
       exitTransform: exit ? getComputedStyle(exit).transform : null,
+      exitTop: exit ? Math.round(exit.getBoundingClientRect().top) : null,
       exitAnim: exit ? getComputedStyle(exit).animationName : null,
       paused: a?.paused,
       volume: a?.volume,
@@ -173,7 +180,8 @@ if (withExit.length === 0) {
 console.log("\n=== every sample where the outgoing line was present ===")
 for (const s of withExit) {
   console.log(
-    `t=${String(s.t).padStart(6)}  "${s.exitText}"  opacity=${s.exitOpacity}  transform=${s.exitTransform}  animation=${s.exitAnim}`,
+    `t=${String(s.t).padStart(6)}  "${s.exitText}"  opacity=${s.exitOpacity}  ` +
+      `filter=${s.exitFilter}  top=${s.exitTop}  animation=${s.exitAnim}`,
   )
 }
 
@@ -181,8 +189,44 @@ const first = withExit[0]
 const last = withExit[withExit.length - 1]
 console.log(
   `\nvisible for ~${Math.round((withExit.length * sampleMs))}ms  ` +
-    `opacity ${first.exitOpacity} -> ${last.exitOpacity}`,
+    `opacity ${first.exitOpacity} -> ${last.exitOpacity}  ` +
+    `filter ${first.exitFilter} -> ${last.exitFilter}`,
 )
+
+/*
+ * The whole point of the effect is that nothing travels, so this has to be checked
+ * per exit rather than across the whole run.
+ *
+ * The outgoing line is anchored above the *current* line, and the current line is
+ * one or two rows tall depending on the lyric, so different exits legitimately sit
+ * at different y. Comparing across the run would report that as movement when it
+ * is just the anchor being a different height. Within one exit the box must not
+ * move at all.
+ */
+const byExit = new Map()
+for (const s of withExit) {
+  const key = s.exitText
+  if (!byExit.has(key)) byExit.set(key, [])
+  byExit.get(key).push(s)
+}
+console.log("\n=== stationary check, per outgoing line ===")
+let anyMoved = false
+for (const [text, group] of byExit) {
+  const tops = new Set(group.map((s) => s.exitTop))
+  const moved = tops.size > 1
+  if (moved) anyMoved = true
+  console.log(
+    `  ${moved ? "MOVED " : "still "} "${text.slice(0, 28)}"  y: ${[...tops].join(", ")}` +
+      `  (${group.length} samples)`,
+  )
+}
+console.log(
+  anyMoved
+    ? "\nRESULT: a line moved while it was dissolving. That is a scroll, not a fade."
+    : "\nRESULT: every outgoing line dissolved without moving.",
+)
+const transforms = new Set(withExit.map((s) => s.exitTransform))
+console.log(`transform: ${[...transforms].join(", ")}`)
 console.log(`animation applied: ${first.exitAnim}`)
 
 process.exit(0)

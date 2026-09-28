@@ -46,8 +46,16 @@ const PAUSED_POLL_MS = 250
 /** Backing-off multiplier once repeated polls find nothing new. */
 const PAUSED_IDLE_STEPS = 4
 
-/** How long the outgoing line takes to rise and fade. Must match the CSS. */
-const EXIT_MS = 380
+/**
+ * How long the outgoing line takes to blur away. Must match the `lyric-exit`
+ * animation in `LyricsPane.css`.
+ *
+ * The line is held in state for exactly this long and then dropped, so the value
+ * is a second copy of a number the CSS also owns. Unmounting one frame early
+ * snaps a visible line out of existence; too late and the fade simply finishes
+ * earlier, which is invisible. So it is biased to err on the long side.
+ */
+const EXIT_MS = 440
 
 /**
  * How many lines to show after the current one.

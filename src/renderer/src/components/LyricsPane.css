@@ -70,80 +70,102 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  /* Half of the current line's fixed slot, which is `calc(2lh + var(--sp-2))` in
-     the `.is-now` rule below. `lh` resolves against the stack's own line-height,
-     which is why the offset is expressed in `lh` rather than pixels. */
-  transform: translateY(calc(-1lh - var(--sp-1)));
+  /*
+   * Half a line back, so the *centre* of the current line lands on the 54%
+   * rather than its top edge. One line is the common case and the fit is exact
+   * for it; a lyric that wraps to two sits half a line low, which is a far better
+   * outcome than the alternative below.
+   */
+  transform: translateY(calc(-0.5lh));
   gap: var(--sp-6);
 }
 
 .lyric-now {
   position: relative;
-  display: flex;
-  align-items: center;
+  display: block;
   /*
-   * A fixed-height slot, with the text centred inside it.
+   * Natural height, and the stack anchored by its top edge.
    *
-   * This is what makes the block safe to centre vertically. The current line is
-   * roughly twice the size of the lines below it, so a block whose height follows
-   * its content changes height on every lyric change — and a centred block with a
-   * height that changes is a block that jumps. Pinning each slot to the height of
-   * two lines of its own size gives the block a constant height whatever the lyric
-   * happens to wrap to, so the current line always sits at the same y and the
-   * whole composition stays put.
+   * Two earlier attempts both produced a visible hole, from opposite directions.
+   * Fixed two-line slots keep the stack's height constant, but a one-line lyric
+   * then floats inside a two-line box — and whether its slack sat above or below
+   * decided whether the gap to the next line looked even or whether the line
+   * looked detached. Bottom-aligning the slot fixed the current line and opened a
+   * hole above each dim one.
    *
-   * Two lines, because that is the common case: a long line in a wide column
-   * wraps once. A line that needs three grows its slot, which is the one case that
-   * still shifts the block, and it is better than clipping a lyric.
+   * So the slots are natural and the stack hangs from its top. The current line is
+   * first, so its top edge never moves whatever it wraps to, and only the dim lines
+   * below shift — which is far less noticeable than the line being sung jumping.
    */
-  min-height: calc(2lh + var(--sp-2));
-  max-width: 18ch;
-  /* No transition on font-size. It is a layout property, and the current line
-     changes size on every lyric change, so transitioning it would reflow the
-     lines below it continuously. */
+  max-width: 100%;
+  /*
+   * The line change is a change of *appearance*, never of position.
+   *
+   * Apple Music's synced lyrics float on the surface of blurred water: the current
+   * line resolves sharp and bright while the others recede and go soft, and
+   * nothing travels. Moving the text — the previous version slid the outgoing line
+   * up and away — reads as a scroll, which is the one thing this layout exists not
+   * to be.
+   *
+   * So the transition is on `opacity`, `filter` and `color`, none of which moves a
+   * pixel of layout. `filter` is excluded by the motion policy for anything larger
+   * than a caption; two lines of this size, changing once every few seconds, is
+   * the case where the depth cue *is* the effect.
+   */
   transition:
-    opacity var(--mid) var(--ease),
-    color var(--mid) var(--ease);
+    opacity 340ms var(--ease),
+    filter 340ms var(--ease),
+    color 340ms var(--ease);
   cursor: pointer;
   text-wrap: balance;
 }
 
 /*
- * The line that was just left, rising and fading.
+ * The line that was just left, dissolving in place.
  *
- * Absolutely positioned at `bottom: 100%` of the current line, so it occupies the
- * space immediately above without adding to the flow. That is what lets a
- * three-line-tall block animate a fourth line through the same space with no
- * reflow at all — the outgoing text is the only thing on screen that is moving,
- * and nothing it moves is being re-laid out.
+ * Absolutely positioned above the current line, so it occupies that space without
+ * joining the flow — no reflow, and it does not disturb the rhythm of the lines
+ * still to come.
+ *
+ * The offset is one gap rather than `bottom: 100%`, because the outgoing line was
+ * the *previous* line of the same list, not a caption attached to this one. It
+ * would have sat the same distance above the current line as the first upcoming
+ * line does below it, and touching the line being sung reads as part of it.
+ *
+ * `EXIT_MS` in `LyricsPane.tsx` holds the node for marginally longer than this
+ * animation runs, and the two have to agree.
  */
 .lyric-now.is-exit {
   position: absolute;
   right: 0;
-  bottom: 100%;
+  bottom: calc(100% + var(--sp-6));
   display: block;
-  max-width: 30ch;
-  font-size: 26px;
+  max-width: 100%;
+  font-size: var(--lyric-next);
   font-weight: var(--fw-medium);
   line-height: 1.32;
   color: var(--fg-2);
   pointer-events: none;
   text-align: right;
-  /* Promoted for the length of the animation, which is short and happens once
-     every few seconds. Without it the first frame of a transform animation is
-     painted on the main thread, which is visible as the line starting late. */
-  will-change: transform, opacity;
-  animation: lyric-exit 380ms var(--ease) forwards;
+  will-change: opacity, filter;
+  animation: lyric-exit 420ms var(--ease) forwards;
 }
 
+/*
+ * No movement. The line blurs out and dims exactly where it already is, which
+ * keeps the eye on the words being sung rather than on a travelling line. A
+ * rise-and-fade was tried here and read as a scroll, which is the one thing this
+ * layout is meant not to be. The blur is the effect: it is the difference between a
+ * line that was here and a line that is now somewhere behind you.
+ */
 @keyframes lyric-exit {
   from {
-    opacity: 0.85;
-    transform: translateY(0);
+    opacity: 0.62;
+    filter: blur(0);
   }
   to {
     opacity: 0;
-    transform: translateY(-30px);
+    filter: blur(4px);
   }
 }
 
@@ -174,11 +196,12 @@
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  /* The current line's slot, so the stack does not resize when the singing comes
-     back in. */
-  min-height: calc(2lh + var(--sp-2));
-  max-width: 30ch;
-  font-size: 40px;
+  /* One line, because the slots are natural now and a lyric is usually one line.
+     Matching that height is what puts the dots exactly where the text will be when
+     the singing comes back, so the block neither jumps nor leaves a hole. */
+  min-height: 1lh;
+  max-width: 100%;
+  font-size: var(--lyric-size, 40px);
   line-height: 1.24;
 }
 
@@ -223,49 +246,53 @@
  * per-word state. Its job is to be the thing you read, and everything about the
  * lines below exists to make this one obvious.
  *
- * The sizes are literals rather than scale steps, and the reason is worth
- * recording: the whole point of this pane is that one line has to be readable from
- * across a room, so it sits above the largest step in the type scale rather than
- * on it. 40 / 26 / 21 is a 1.54 ratio between the current line and the first
- * upcoming one, which is what puts the hierarchy in the glance rather than in the
- * reading.
+ * The size comes from a custom property rather than a literal, because the
+ * column is width-constrained: a fixed 40px in a narrow window wraps a Vietnamese
+ * line onto two rows, and a two-row "current line" breaks the rhythm of the block
+ * far more than a slightly smaller one does. `App.tsx` measures the column and
+ * sets `--lyric-size` to whatever fits about forty characters on one row, clamped
+ * so it never drops below readable or rises above the size the design wants.
  */
 .lyric-now.is-now {
-  font-size: 40px;
+  font-size: var(--lyric-size, 40px);
   font-weight: var(--fw-display);
   line-height: 1.24;
   letter-spacing: var(--track-display);
   color: var(--fg-0);
   opacity: 1;
-  /* Wide enough that a normal line does not wrap. At 17ch the Vietnamese lines in
-     this library broke across three rows, which turned one readable sentence into
-     a paragraph and made the current line look like a heading rather than a lyric. */
-  max-width: 30ch;
+  filter: none;
+  max-width: 100%;
 }
 
 /*
- * What comes next, fading with distance.
+ * What comes next, receding.
  *
- * The steps are wide on purpose. Two shades of "slightly dimmer" is a gradient
- * with no destination, and the second line ended up as legible as the first, so
- * the eye had no idea where to land.
+ * Two things happen with distance, and both are needed. Opacity alone is a
+ * gradient with no destination — two shades of "slightly dimmer" left the second
+ * line as legible as the first, so the eye had nowhere to land. The blur is what
+ * makes it depth rather than a fade: the current line sits on the surface and the
+ * rest sit behind it. That is the effect Apple Music's lyrics are described as
+ * having, and it is why the line change reads as a change of focus rather than as
+ * text being replaced.
  */
 .lyric-now.is-next-1 {
-  font-size: 26px;
+  font-size: var(--lyric-next, 26px);
   font-weight: var(--fw-medium);
   line-height: 1.32;
   color: var(--fg-2);
-  opacity: 0.6;
-  max-width: 34ch;
+  opacity: 0.62;
+  filter: blur(1.1px);
+  max-width: 100%;
 }
 
 .lyric-now.is-next-2 {
-  font-size: 21px;
+  font-size: var(--lyric-far, 21px);
   font-weight: var(--fw-body);
   line-height: 1.4;
   color: var(--fg-2);
   opacity: 0.3;
-  max-width: 38ch;
+  filter: blur(2.4px);
+  max-width: 100%;
 }
 
 /*
