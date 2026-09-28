@@ -30,6 +30,19 @@ interface LyricsPaneProps {
   onlineStatus?: "searching" | "not-found" | "offline"
   onlineDetail?: string
   onRetryOnline?: () => void
+
+  /**
+   * Whether online lookup is switched on, and a way to switch it on from here.
+   *
+   * Both optional, and both matter for discoverability rather than function. The
+   * setting is off by default because a lookup reports what you play to a third
+   * party, which is a decision that should be made deliberately — but a pane
+   * that says only "no lyrics in this file" while silently having a feature that
+   * would fix it is worse than either extreme. The user reads that as the app
+   * being unable, not as a choice they have not made yet.
+   */
+  onlineEnabled?: boolean
+  onEnableOnline?: () => void
 }
 
 const AUTO_RESUME_MS = 2600
@@ -79,6 +92,8 @@ export default function LyricsPane({
   onlineStatus,
   onlineDetail,
   onRetryOnline,
+  onlineEnabled,
+  onEnableOnline,
 }: LyricsPaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<Map<number, HTMLButtonElement>>(new Map())
@@ -339,6 +354,24 @@ export default function LyricsPane({
         <Lyrics size={26} />
         <p>No lyrics in this file</p>
         <span>Embed a LYRICS or SYNCEDLYRICS tag, or drop a matching .lrc beside it.</span>
+        {/*
+          Offered only when the setting is actually off and there is a way to turn
+          it on from here. This is the difference between a user who never finds
+          the feature and one who turns it on knowingly — and the cost of that
+          privacy tradeoff has to be stated here, not only in Settings, because
+          this is where someone actually wants it.
+        */}
+        {onEnableOnline && onlineEnabled === false && (
+          <>
+            <button className="lyrics-retry" onClick={onEnableOnline}>
+              Look up lyrics online
+            </button>
+            <span className="lyrics-privacy">
+              Sends this track&apos;s artist, title and album to lrclib.net. Turn it off
+              any time in Settings.
+            </span>
+          </>
+        )}
       </div>
     )
   }

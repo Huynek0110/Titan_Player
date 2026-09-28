@@ -3,8 +3,17 @@
   flex-direction: column;
   min-height: 0;
   flex: 1;
-  /* See `.lyrics-inner`: a fixed lead-in, not a viewport percentage. */
-  --lyrics-pad: 260px;
+  /*
+   * Lead-in above and below the lines, so the first and last can be scrolled to
+   * a comfortable position instead of jamming against the pane's edges.
+   *
+   * It was 260px, which is 520px of padding in total. On a pane bounded by the
+   * window that leaves barely any room for actual lyrics, and the scroll range
+   * is mostly empty space — which reads as the lyrics having taken over the
+   * screen. It only ever needs to clear the fade mask at each end, and the
+   * auto-scroll's anchor is what does the centring, not this.
+   */
+  --lyrics-pad: 110px;
 }
 
 .lyrics-scroll {
@@ -29,11 +38,10 @@
    * A fixed lead-in, not a viewport percentage. With `42vh` the scroll height
    * depended on the window height, so resizing the window changed the content
    * height and the auto-scroll target in the same frame, and the "38% down"
-   * anchor drifted with it. Fixed padding also makes the end of a long lyric
-   * reachable: the last line lands near the top of the pane once the scroll
-   * clamps, and the first lines are still clear of the top mask.
+   * anchor drifted with it. The right edge carries more padding than the left
+   * because the lines are right-aligned and a long line needs somewhere to end.
    */
-  padding: var(--lyrics-pad) 30px var(--lyrics-pad) 8px;
+  padding: var(--lyrics-pad) 34px var(--lyrics-pad) 8px;
 }
 
 /* --- a single line ----------------------------------------------------- */

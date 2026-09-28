@@ -58,20 +58,49 @@ await evaluate(`(() => {
   return true
 })()`)
 
-// Load the track into the queue WITHOUT playing it. A single click selects, and
-// the now-playing button is disabled until a track is current, so the track is
-// queued by clicking its row play button's parent and then immediately paused.
-await evaluate(`(() => {
-  const row = document.querySelectorAll('.row')[${rowIndex}]
-  if (!row) return 'no row'
-  const btn = row.querySelector('.row-play')
-  if (btn) { btn.click(); return 'queued via row play' }
-  row.click()
-  return 'clicked row'
+// The view is restored from `lastView`, so the app may have reopened on Settings
+// or a playlist with no rows in the DOM. Go to the library first, or there is
+// nothing to click.
+const view = await evaluate(`(() => {
+  const nav = [...document.querySelectorAll('.nav-item, button')]
+    .find(b => /all songs/i.test(b.textContent || ''))
+  if (!nav) return 'no All Songs nav item'
+  nav.click()
+  return 'clicked All Songs'
 })()`)
-await new Promise((r) => setTimeout(r, 900))
+console.log("view:", view)
+await new Promise((r) => setTimeout(r, 700))
 
-// Pause immediately whatever happened, then silence again.
+// A single click only selects, and the now-playing button stays disabled until a
+// track is current, so the track has to be queued the way a user does it: a real
+// double-click. That does start playback, so the element is muted and at zero
+// volume beforehand, and paused again immediately afterwards — the check below
+// asserts it, so this script cannot silently produce sound.
+const spot = await evaluate(`(() => {
+  const row = document.querySelectorAll('.row')[${rowIndex}]
+  if (!row) return null
+  const t = row.querySelector('.row-title') ?? row
+  const r = t.getBoundingClientRect()
+  return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2) }
+})()`)
+
+if (!spot) {
+  console.error(`no row at index ${rowIndex}`)
+  process.exit(1)
+}
+
+for (let i = 1; i <= 2; i += 1) {
+  await send("Input.dispatchMouseEvent", {
+    type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: i,
+  })
+  await send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: spot.x, y: spot.y, button: "left", clickCount: i,
+  })
+  await new Promise((r) => setTimeout(r, 50))
+}
+await new Promise((r) => setTimeout(r, 700))
+
+// Pause immediately, then silence again.
 await evaluate(`(() => {
   const a = document.querySelector('audio')
   if (a) { a.pause(); a.volume = 0; a.muted = true }
@@ -90,6 +119,53 @@ const opened = await evaluate(`(() => {
 console.log("open now playing:", opened)
 
 await new Promise((r) => setTimeout(r, 2000))
+
+// Seeking is how the karaoke wiring gets checked without sound: setting
+// currentTime advances the lyric clock exactly as playback would, and the
+// element is at zero volume and muted, so nothing is audible.
+const seekTo = Number(process.argv[5] ?? 0)
+if (seekTo > 0) {
+  await evaluate(`(() => {
+    const a = document.querySelector('audio')
+    if (a) { a.currentTime = ${seekTo}; a.pause(); a.volume = 0; a.muted = true }
+    return true
+  })()`)
+  // Long enough for the rAF loop to find the line, run the auto-scroll and write
+  // the fill. The loop backs off to ~1Hz when paused, so this is not instant.
+  await new Promise((r) => setTimeout(r, 2500))
+
+  const active = await evaluate(`(() => {
+    const el = document.querySelector('.lyric-line.active')
+    if (!el) return { found: false }
+    const scroll = document.querySelector('.lyrics-scroll')
+    const inner = el.querySelector('.lyric-scale')
+    return {
+      found: true,
+      text: el.innerText.trim().slice(0, 60),
+      className: el.className,
+      // \`--fill\` is written on the line element itself, not on the inner span,
+      // so reading it proves the rAF loop ran rather than inferring it from a
+      // screenshot. The scale comes from a class, so it needs the computed value.
+      fill: el.style.getPropertyValue('--fill') || null,
+      scale: inner ? getComputedStyle(inner).transform : null,
+      // How many lines are inside the pane's visible box, which is what tells
+      // us the fade mask and the scroller are actually bounded.
+      linesInView: (() => {
+        if (!scroll) return null
+        const box = scroll.getBoundingClientRect()
+        return [...document.querySelectorAll('.lyric-line')].filter((n) => {
+          const r = n.getBoundingClientRect()
+          return r.bottom > box.top && r.top < box.bottom
+        }).length
+      })(),
+      scrollTop: scroll ? Math.round(scroll.scrollTop) : null,
+      audioTime: Number((document.querySelector('audio')?.currentTime ?? 0).toFixed(2)),
+      paused: document.querySelector('audio')?.paused,
+      volume: document.querySelector('audio')?.volume,
+    }
+  })()`)
+  console.log("active line:", JSON.stringify(active, null, 2))
+}
 
 const state = await evaluate(`(() => {
   const np = document.querySelector('.nowplaying')

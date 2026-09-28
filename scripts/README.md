@@ -30,9 +30,11 @@ and run through `node` rather than as shell scripts.
 | --- | --- |
 | `screenshot.mjs <port> <out.png> [maximise]` | Captures the window. `maximise` drives the app's own maximise button, so it also exercises the resize path. |
 | `shot-nowplaying.mjs <port> <out.png> [row]` | Double-clicks a track, opens the now-playing view, reports which parts of it mounted, then captures. **This plays audio.** |
-| `shot-nowplaying-quiet.mjs <port> <out.png> [row]` | The same view without playing anything: volume is pinned to zero and playback is paused before the view opens. Use this one when sound is not wanted. |
+| `shot-nowplaying-quiet.mjs <port> <out.png> [row] [seekSeconds]` | The same view with the volume pinned to zero and playback paused, plus an optional seek so the active lyric line and the `--fill` karaoke sweep can be checked without sound. Use this one whenever sound is not wanted. |
 | `test-playback.mjs <port> [row]` | The one that matters: does a real double-click actually start playback, and does the playhead advance? Exits non-zero if not. |
 | `inspect-runtime.mjs <port>` | One snapshot of library state, sort order, the resolved accent, artwork load state and the media element. Good for "is the accent following the cover". |
+| `dump-dom.mjs <port> [selector] [maxChars]` | Element counts, some text, and the measured geometry of the now-playing layout. Faster than a screenshot for "did it render, and is it inside the window". |
+| `probe-seek.mjs <port> <seconds>` | Sets `currentTime` and reports `readyState`, `seekable` and the position before and after. This is how the non-seekable `media://` response was found. |
 | `probe-*.mjs` | Lower-level network, protocol and strategy probes written while the audio path was being diagnosed. Kept because they are the fastest way back into that area. |
 | `make-test-audio.mjs` | Generates a short synthetic FLAC for testing the scanner and the player without using real music. |
 | `inspect-audio.mjs` | Dumps the tags of one file, for checking what the scanner will see. |

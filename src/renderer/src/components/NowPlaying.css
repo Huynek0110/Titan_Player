@@ -284,8 +284,22 @@
   min-height: 0;
   display: grid;
   grid-template-columns: var(--np-art, 420px) 0px var(--np-info, 620px);
+  /*
+   * The row is bounded by the container, not by its content.
+   *
+   * This is the bug that emptied the left column. With an auto-sized row, a long
+   * lyric file made the row taller than the window, and `align-content: center`
+   * then centred that oversized row — pushing its top above the viewport. The
+   * left column, vertically centred inside a row that now begins off-screen, went
+   * with it, and the lyrics started above the top edge. `minmax(0, 1fr)` caps the
+   * row at the container so the overflow lands inside the lyrics pane, which is
+   * the only thing here meant to scroll.
+   */
+  grid-template-rows: minmax(0, 1fr);
   column-gap: var(--sp-10);
-  align-content: center;
+  /* Per-item, not per-row: each column centres itself inside the bounded row. */
+  align-items: center;
+  overflow: hidden;
   /* The volume rail lives on the window's left edge, so the content column has
      to clear it or the artwork overlaps the slider. */
   padding: var(--sp-4) var(--gutter) var(--sp-9) 104px;
@@ -637,11 +651,13 @@ body.np-resizing {
 .nowplaying-info {
   position: relative;
   min-width: 0;
-  align-self: center;
+  /* Bounded by the row, and itself the scroll container's parent. `height: 100%`
+     was resolving against a content-sized row, which is circular, so it did
+     nothing and the pane grew to whatever the lyric file happened to contain. */
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  height: 100%;
 }
 
 /*

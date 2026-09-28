@@ -439,6 +439,8 @@ export default function App() {
             }
             onlineDetail={onlineState.detail}
             onRetryOnline={() => void retryOnlineLyrics()}
+            onlineEnabled={store.settings?.fetchOnlineLyrics}
+            onEnableOnline={() => void store.updateSettings({ fetchOnlineLyrics: true })}
           />
         </NowPlaying>
       )}

@@ -164,8 +164,20 @@ Each of these looked correct in review and was invisible until the app ran.
   library split across `C:` and an external `E:` permanently erase every `E:`
   track from every playlist when one scan could not reach the drive. It now
   requires that every configured folder was actually reachable.
-- **`import fs from "node:fs"` is callback-based.** `await fs.stat()` throws.
-  Use `fs.promises.stat()`.
+- **Seeking did nothing at all.** The audio was served with `net.fetch` on a
+  `file://` URL, which loads and plays correctly, but the response does not
+  advertise `Accept-Ranges`. Chromium therefore reported the media as
+  non-seekable — `seekable.end(0)` stayed `0` and every `currentTime` assignment
+  was silently ignored. `readyState` reached 4 and the duration was correct, so
+  nothing looked wrong: playback worked, the seek bar was draggable, it just
+  never went anywhere, and no error surfaced anywhere either. `protocol.ts` now
+  serves the bytes itself with explicit `206` and `Content-Range`. **A media
+  element decides whether it can seek from `Accept-Ranges` on the first
+  response**, so it has to be present on the `200` as well as the partial one.
+- **`import fs from "node:fs"` is callback-based.** `await fs.stat()` returns
+  `void` rather than rejecting, so it does not throw — it yields `undefined` and
+  every property read fails with a confusing error instead of a 404. Use
+  `fs.promises.stat()`. This was hit twice, in two different files.
 - **PowerShell blocks `.ps1` shims on this machine** — use `npm.cmd`, `npx.cmd`.
 - **Synthetic mouse clicks from PowerShell never reached the window.** Use CDP
   `Input.dispatchMouseEvent` via `scripts/play-a-track.mjs`.

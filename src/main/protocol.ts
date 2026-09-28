@@ -1,5 +1,6 @@
-import { net, protocol } from "electron"
-import { pathToFileURL } from "node:url"
+import { protocol } from "electron"
+import fs from "node:fs"
+import { Readable } from "node:stream"
 import path from "node:path"
 import { DEFAULT_EXTENSIONS } from "../shared/types.js"
 
@@ -164,25 +165,123 @@ export function handleMediaProtocol(): void {
       }
 
       /*
-       * Two details make this work, and both were found the hard way.
+       * Served here rather than delegated to `net.fetch`, and the reason is
+       * seeking.
        *
-       *  - The target must be a `file://` URL. Passing the original `media://`
-       *    request to `net.fetch` makes it fail to load, which Chromium reports
-       *    as MEDIA_ERR_SRC_NOT_SUPPORTED — the UI then claims the file is an
-       *    unsupported format when the file is in fact a valid FLAC that plays
-       *    perfectly over `file://` directly.
-       *  - `Range` has to be carried across by hand, because building a fresh
-       *    Request from the URL alone drops every header. A media element seeks
-       *    with a Range header, and without it seeking re-reads from byte zero.
+       * `net.fetch` on a `file://` URL loads and plays correctly, but the
+       * response it produces does not advertise `Accept-Ranges`, and Chromium
+       * therefore reports the media as non-seekable: `seekable.end(0)` stays 0
+       * and every attempt to set `currentTime` is silently ignored. Playback
+       * works, `readyState` reaches 4, the duration is right, and dragging the
+       * seek bar does nothing at all — with no error anywhere. Doing it by hand
+       * means the range handling, the `206` and the `Content-Range` header are
+       * all explicit, and the audio element can actually seek.
        */
-      const headers = new Headers()
-      const range = request.headers.get("Range")
-      if (range) headers.set("Range", range)
-
-      return net.fetch(pathToFileURL(raw).toString(), { headers })
+      return serveAudioFile(raw, request.headers.get("Range"))
     }
 
     return new Response("not found", { status: 404 })
+  })
+}
+
+/** Content types for the formats the scanner will find. */
+const AUDIO_MIME: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".aac": "audio/aac",
+  ".m4b": "audio/mp4",
+  ".mp4": "audio/mp4",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".wav": "audio/wav",
+  ".aif": "audio/aiff",
+  ".aiff": "audio/aiff",
+  ".ape": "audio/x-ape",
+  ".wv": "audio/x-wavpack",
+  ".wma": "audio/x-ms-wma",
+}
+
+/**
+ * Parse a single byte range.
+ *
+ * Only the forms a media element actually sends are handled: `bytes=start-`,
+ * `bytes=start-end` and `bytes=-suffix`. Anything else returns null, which the
+ * caller answers with the whole file — a 200 is always a valid response to a
+ * range request, so an unparseable header degrades to "plays from the start"
+ * rather than to an error.
+ */
+function parseRange(header: string | null, size: number): { start: number; end: number } | null {
+  if (!header) return null
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!match) return null
+
+  const [, rawStart, rawEnd] = match
+  if (rawStart === "" && rawEnd === "") return null
+
+  let start: number
+  let end: number
+  if (rawStart === "") {
+    // A suffix range: the final N bytes.
+    const suffix = Number(rawEnd)
+    if (!Number.isFinite(suffix) || suffix <= 0) return null
+    start = Math.max(0, size - suffix)
+    end = size - 1
+  } else {
+    start = Number(rawStart)
+    end = rawEnd === "" ? size - 1 : Number(rawEnd)
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  if (start > end || start >= size) return null
+  return { start, end: Math.min(end, size - 1) }
+}
+
+async function serveAudioFile(absolute: string, rangeHeader: string | null): Promise<Response> {
+  let size: number
+  try {
+    // `fs.promises`, not `fs`: the callback form returns void rather than
+    // rejecting, so `await fs.stat(...)` yields undefined and every property
+    // read below fails with a confusing error instead of a 404.
+    const stat = await fs.promises.stat(absolute)
+    if (!stat.isFile()) return new Response("not a file", { status: 404 })
+    size = stat.size
+  } catch {
+    return new Response("not found", { status: 404 })
+  }
+
+  const type = AUDIO_MIME[path.extname(absolute).toLowerCase()] ?? "application/octet-stream"
+  // Sent on every response, including the 200. A media element decides whether
+  // it can seek from this header, so omitting it on the first response is enough
+  // to make the whole resource non-seekable even though later ranges would work.
+  const base = {
+    "content-type": type,
+    "accept-ranges": "bytes",
+    "access-control-allow-origin": "*",
+    "x-content-type-options": "nosniff",
+    // The bytes never change for a given path, and a range response must not be
+    // cached separately from the full one or a seek can read a stale slice.
+    "cache-control": "no-cache",
+  } as const
+
+  const range = parseRange(rangeHeader, size)
+  if (!range) {
+    const stream = Readable.toWeb(fs.createReadStream(absolute)) as ReadableStream<Uint8Array>
+    return new Response(stream, { status: 200, headers: { ...base, "content-length": String(size) } })
+  }
+
+  const { start, end } = range
+  const stream = Readable.toWeb(
+    fs.createReadStream(absolute, { start, end }),
+  ) as ReadableStream<Uint8Array>
+  return new Response(stream, {
+    status: 206,
+    headers: {
+      ...base,
+      "content-length": String(end - start + 1),
+      "content-range": `bytes ${start}-${end}/${size}`,
+    },
   })
 }
 
