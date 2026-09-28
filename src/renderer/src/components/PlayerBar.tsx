@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useStore } from "../state/store"
 import type { usePlayer } from "../lib/usePlayer"
 import { formatDuration } from "../lib/format"
+import { useGlassSurface } from "../lib/glass"
 import Artwork from "./Artwork"
 import {
   ChevronUp,
@@ -32,6 +33,14 @@ interface PlayerBarProps {
  */
 export default function PlayerBar({ player }: PlayerBarProps) {
   const store = useStore()
+  /*
+   * Liquid Glass on the one surface that sits over scrolling content, so there is
+   * something behind it worth refracting. A weak displacement on purpose: this is
+   * a 100px strip across the bottom of the window, and a strong rim bend on a
+   * surface that wide stops reading as glass and starts reading as a funhouse
+   * mirror at the left and right ends.
+   */
+  const barRef = useGlassSurface<HTMLElement>({ displacement: 26, blur: 3, flat: 0.4 })
   const { currentTrack, queue, queueIndex, queueTracks, favourites, settings, shuffled, toggleFavourite } =
     store
   const { state, toggle, previous, next, seek, setVolume, toggleMute, cycleRepeat, toggleShuffle } = player
@@ -52,7 +61,7 @@ export default function PlayerBar({ player }: PlayerBarProps) {
   const level = Math.round(shownVolume * 100)
 
   return (
-    <footer className="playerbar glass">
+    <footer className="playerbar glass" ref={barRef}>
       <div className="playerbar-left">
         {currentTrack ? (
           <>

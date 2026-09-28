@@ -34,13 +34,30 @@
    */
   height: var(--player-h, 104px);
   padding: 0 18px;
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(12, 12, 18, 0.86);
-  /* The only surface that keeps a backdrop blur, because it genuinely sits over
-     scrolling content. 20px rather than 40: past that point the difference is
-     not visible and the kernel cost is. */
+  /*
+   * The refraction itself is written onto the element by `useGlassSurface`, which
+   * has to generate an SVG displacement map sized to this exact box. The blur
+   * here is a fallback for before that first frame lands and for the case where
+   * the hook never runs at all.
+   *
+   * The background has to be translucent or the glass cannot be seen: a
+   * `backdrop-filter` refracts what is behind the element, and an opaque
+   * background paints over exactly that. 0.62 rather than the 0.86 this used to
+   * be, because the refraction supplies the visual weight the opacity was
+   * carrying.
+   *
+   * Only this surface keeps a glass filter. It is the one panel that genuinely
+   * sits over scrolling content, so it is the one where there is something to
+   * refract. Four simultaneous full-height blurs used to re-blur every frame of
+   * a window resize, which is what made maximising stutter.
+   */
+  background: rgba(12, 12, 18, 0.62);
   backdrop-filter: blur(20px) saturate(1.6);
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border-top: 1px solid rgba(255, 255, 255, 0.11);
+  /* A highlight along the top edge. Liquid Glass gets most of its read from the
+     way light catches a rim, and a hairline is the cheapest part of that. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 /* --- left: now playing ------------------------------------------------- */
