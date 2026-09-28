@@ -125,6 +125,27 @@ lyrics would re-query on every play.
 
 Each of these looked correct in review and was invisible until the app ran.
 
+- **Nothing animated, and the code was wrong about why.** This machine reports
+  `prefers-reduced-motion: reduce`, because Windows has *Settings → Accessibility
+  → Visual effects → Animation effects* switched off. Every motion in the app is
+  correctly suppressed by that preference, which is why "there are no animations"
+  kept coming up. The code was also wrong in its handling: it emitted the outgoing
+  lyric line and then hid it with `opacity: 0` under a reduced-motion media
+  query, so a node rendered for the full 380ms of the animation and was invisible
+  for all of it. `useReducedMotion` now decides the *content*, not just the
+  timing — under `reduce` the outgoing line is never rendered, and the incoming
+  line still cross-fades, because a change with no indication at all is worse for
+  everyone. **If someone reports the app feels static, check the OS setting before
+  looking for a bug.**
+- **A probe can fake a broken feature.** Calling `audio.play()` from a script
+  advances the media clock but leaves the app's own `isPlaying` false, so the
+  lyrics pane stays on its paused backoff poll and the current line never moves —
+  which looks exactly like a broken animation while the feature is fine. Same for
+  `userGesture: true`, which unblocks the play but still bypasses the app's state.
+  Anything that observes playback has to start it through a real
+  `Input.dispatchMouseEvent`, and has to report the clock span so a stopped clock
+  is distinguishable from a broken feature. `scripts/README.md` records this.
+
 - **Five window buttons.** `titleBarStyle: "hidden"` was combined with
   `titleBarOverlay`, which draws the native minimise/maximise/close, *and*
   `TitleBar.tsx` drew its own. All three are now drawn by the app. The overlay

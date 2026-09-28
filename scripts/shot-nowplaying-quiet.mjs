@@ -100,10 +100,15 @@ for (let i = 1; i <= 2; i += 1) {
 }
 await new Promise((r) => setTimeout(r, 700))
 
-// Pause immediately, then silence again.
+// Pause immediately, then silence again — unless asked to keep playing, which
+// is how a follow-up probe gets a moving clock to observe.
+const keepPlaying = process.argv[6] === "keep-playing"
 await evaluate(`(() => {
   const a = document.querySelector('audio')
-  if (a) { a.pause(); a.volume = 0; a.muted = true }
+  if (!a) return true
+  a.volume = 0
+  a.muted = true
+  if (!${keepPlaying}) a.pause()
   return true
 })()`)
 await new Promise((r) => setTimeout(r, 400))
@@ -127,7 +132,10 @@ const seekTo = Number(process.argv[5] ?? 0)
 if (seekTo > 0) {
   await evaluate(`(() => {
     const a = document.querySelector('audio')
-    if (a) { a.currentTime = ${seekTo}; a.pause(); a.volume = 0; a.muted = true }
+    // No pause here. It used to be in this block, which meant the
+    // \`keep-playing\` flag checked earlier was overruled by the seek that followed
+    // it — and the flag exists only so a follow-up probe can watch a moving clock.
+    if (a) { a.currentTime = ${seekTo}; a.volume = 0; a.muted = true }
     return true
   })()`)
   // Long enough for the rAF loop to find the line, run the auto-scroll and write
@@ -192,6 +200,16 @@ const { result } = await send("Page.captureScreenshot", { format: "png" })
 const { writeFileSync } = await import("node:fs")
 writeFileSync(out, Buffer.from(result.data, "base64"))
 console.log("saved", out)
+
+// Stop here rather than at the end of setup, so a `keep-playing` caller gets a
+// real moving clock and everyone else does not leave a track running.
+if (!keepPlaying) {
+  await evaluate(`(() => {
+    const a = document.querySelector('audio')
+    if (a) { a.pause(); a.volume = 0; a.muted = true }
+    return true
+  })()`)
+}
 
 ws.close()
 process.exit(0)

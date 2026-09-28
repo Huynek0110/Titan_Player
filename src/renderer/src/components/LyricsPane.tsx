@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { activeLineIndex } from "@shared/lyrics"
 import type { LyricLine } from "@shared/types"
 import { formatDuration } from "../lib/format"
+import { useReducedMotion } from "../lib/useReducedMotion"
 import { Lyrics } from "./Icons"
 import "./LyricsPane.css"
 
@@ -94,9 +95,15 @@ export default function LyricsPane({
    * vanished instantly while the incoming ones faded in, which read as the text
    * being replaced rather than as the song moving on. It is positioned
    * absolutely so it costs no layout, and cleared on a timer.
+   *
+   * Suppressed entirely under `prefers-reduced-motion`, where the whole point of
+   * the preference is that a line should not travel across the screen. The
+   * incoming line still fades, so the change is still legible; only the movement
+   * goes. See `useReducedMotion`.
    */
   const [exiting, setExiting] = useState<{ line: LyricLine; from: number } | null>(null)
   const exitTimer = useRef<number | null>(null)
+  const reduced = useReducedMotion()
 
   /**
    * The user's timing nudge, stored against the array it was set for.
@@ -185,7 +192,7 @@ export default function LyricsPane({
     if (active === lastActive.current) return
     const was = lastActive.current
     lastActive.current = active
-    if (!synced) return
+    if (!synced || reduced) return
     // Seeking backwards past a line does not get a farewell animation; the pane
     // is being dragged, not played through, and a line dissolving under a
     // scrubbing pointer reads as the text failing to keep up.
@@ -195,7 +202,7 @@ export default function LyricsPane({
     if (exitTimer.current) window.clearTimeout(exitTimer.current)
     setExiting({ line: leaving, from: active - was })
     exitTimer.current = window.setTimeout(() => setExiting(null), EXIT_MS)
-  }, [active, lines, synced])
+  }, [active, lines, synced, reduced])
 
   useEffect(
     () => () => {
@@ -382,53 +389,59 @@ export default function LyricsPane({
   return (
     <div className="lyrics-wrap">
       <div className="lyrics-focus" ref={groupRef} onKeyDown={onLineKeys}>
-        {/*
-          The instrumental marker. Three dots rather than a spinner, and the last
-          one faint rather than absent, so the state reads as "waiting for the
-          next line" and not as an empty box. It sits in the same place the lines
-          do, so the layout does not jump when the song comes back in.
-        */}
-        {phase === "waiting" && (
-          <div className="lyrics-waiting" role="status" aria-label="No lyrics here right now">
-            <i />
-            <i />
-            <i />
-          </div>
-        )}
+        <div className="lyrics-stack">
+          {visible.map(({ line, offset }) => (
+            <button
+              // Keyed on the timestamp, so React carries the same DOM node from
+              // "second line up" to "current" rather than destroying and rebuilding
+              // it. The state transition is then a CSS transition on a node that
+              // already exists, which is where the motion comes from.
+              key={`${line.time}-${line.text}`}
+              data-offset={offset}
+              className={`lyric-now is-${offset === 0 ? "now" : `next-${offset}`}`}
+              tabIndex={offset === 0 ? 0 : -1}
+              aria-current={offset === 0 || undefined}
+              onClick={() => seekTo(line)}
+              title={`Jump to ${formatDuration(line.time)}`}
+            >
+              {line.text || "♪"}
+              {/*
+                The line that was just left, absolutely positioned above this one so
+                it costs no layout and can rise and fade on its own. Nested rather
+                than a sibling because `bottom: 100%` then means "just above the
+                current line" whatever its height turns out to be, which a sibling
+                would have to guess.
+              */}
+              {offset === 0 && exiting && (
+                <span
+                  className="lyric-now is-exit"
+                  key={`exit-${exiting.line.time}-${exiting.from}`}
+                  aria-hidden="true"
+                >
+                  {exiting.line.text}
+                </span>
+              )}
+            </button>
+          ))}
 
-        {visible.map(({ line, offset }) => (
-          <button
-            // Keyed on the timestamp, so React carries the same DOM node from
-            // "second line up" to "current" rather than destroying and rebuilding
-            // it. The state transition is then a CSS transition on a node that
-            // already exists, which is where the motion comes from.
-            key={`${line.time}-${line.text}`}
-            data-offset={offset}
-            className={`lyric-now is-${offset === 0 ? "now" : `next-${offset}`}`}
-            tabIndex={offset === 0 ? 0 : -1}
-            aria-current={offset === 0 || undefined}
-            onClick={() => seekTo(line)}
-            title={`Jump to ${formatDuration(line.time)}`}
-          >
-            {line.text || "♪"}
-            {/*
-              The line that was just left, absolutely positioned above this one so
-              it costs no layout and can rise and fade on its own. Nested rather
-              than a sibling because `bottom: 100%` then means "just above the
-              current line" whatever its height turns out to be, which a sibling
-              would have to guess.
-            */}
-            {offset === 0 && exiting && (
-              <span
-                className="lyric-now is-exit"
-                key={`exit-${exiting.line.time}-${exiting.from}`}
-                aria-hidden="true"
-              >
-                {exiting.line.text}
-              </span>
-            )}
-          </button>
-        ))}
+          {/*
+            The instrumental marker. Three dots rather than a spinner, and the last
+            one faint rather than absent, so the state reads as "waiting for the
+            next line" and not as an empty box. It sits in the same slot the lines
+            do, so nothing jumps when the song comes back in.
+          */}
+          {phase === "waiting" && (
+            <div
+              className="lyrics-waiting"
+              role="status"
+              aria-label="No lyrics here right now"
+            >
+              <i />
+              <i />
+              <i />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="lyrics-foot">

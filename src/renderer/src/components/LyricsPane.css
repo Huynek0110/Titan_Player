@@ -42,32 +42,65 @@
  * rather than breaking it.
  */
 .lyrics-focus {
+  position: relative;
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: flex-start;
-  /*
-   * A wide gap, roughly a line's height again. The upcoming lines are meant to be
-   * separate from the current one rather than a continuation of it — with a
-   * tight gap the three lines read as one block of text and the eye has to work
-   * out which one is being sung.
-   */
-  gap: 30px;
-  padding: 24vh var(--sp-5) 0;
   text-align: right;
   font-family: var(--font-display);
 }
 
+/*
+ * The line stack, positioned by its *first* line rather than as a centred block.
+ *
+ * This is the one place the composition is decided. Centring the whole stack puts
+ * the current line at about 40% of the pane, because two more lines hang below it
+ * and pull the block's centre upward. The reference has the current line at
+ * roughly 54% — just below the middle, where the eye rests — with the upcoming
+ * lines falling away underneath it.
+ *
+ * So the stack is anchored to its first slot: `top: 54%` and a pull back by half
+ * that slot's height, which is a known constant because the slot is fixed-height.
+ * That is a `top` and a transform, so it costs no layout, and it tracks the pane's
+ * real height rather than inferring one from a percentage of its width.
+ */
+.lyrics-stack {
+  position: absolute;
+  top: 54%;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  /* Half of the current line's fixed slot, which is `calc(2lh + var(--sp-2))` in
+     the `.is-now` rule below. `lh` resolves against the stack's own line-height,
+     which is why the offset is expressed in `lh` rather than pixels. */
+  transform: translateY(calc(-1lh - var(--sp-1)));
+  gap: var(--sp-6);
+}
+
 .lyric-now {
   position: relative;
-  display: block;
-  max-width: 26ch;
+  display: flex;
+  align-items: center;
+  /*
+   * A fixed-height slot, with the text centred inside it.
+   *
+   * This is what makes the block safe to centre vertically. The current line is
+   * roughly twice the size of the lines below it, so a block whose height follows
+   * its content changes height on every lyric change — and a centred block with a
+   * height that changes is a block that jumps. Pinning each slot to the height of
+   * two lines of its own size gives the block a constant height whatever the lyric
+   * happens to wrap to, so the current line always sits at the same y and the
+   * whole composition stays put.
+   *
+   * Two lines, because that is the common case: a long line in a wide column
+   * wraps once. A line that needs three grows its slot, which is the one case that
+   * still shifts the block, and it is better than clipping a lyric.
+   */
+  min-height: calc(2lh + var(--sp-2));
+  max-width: 18ch;
   /* No transition on font-size. It is a layout property, and the current line
      changes size on every lyric change, so transitioning it would reflow the
-     lines below it continuously. The block is top-aligned rather than centred, so
-     the instant size change moves nothing above it — see `.lyrics-focus`. */
+     lines below it continuously. */
   transition:
     opacity var(--mid) var(--ease),
     color var(--mid) var(--ease);
@@ -89,31 +122,42 @@
   right: 0;
   bottom: 100%;
   display: block;
-  max-width: 26ch;
-  font-size: var(--fs-lg);
+  max-width: 30ch;
+  font-size: 26px;
   font-weight: var(--fw-medium);
-  line-height: var(--lh-lg);
+  line-height: 1.32;
   color: var(--fg-2);
   pointer-events: none;
   text-align: right;
+  /* Promoted for the length of the animation, which is short and happens once
+     every few seconds. Without it the first frame of a transform animation is
+     painted on the main thread, which is visible as the line starting late. */
+  will-change: transform, opacity;
   animation: lyric-exit 380ms var(--ease) forwards;
 }
 
 @keyframes lyric-exit {
   from {
-    opacity: 0.9;
+    opacity: 0.85;
     transform: translateY(0);
   }
   to {
     opacity: 0;
-    transform: translateY(-26px);
+    transform: translateY(-30px);
   }
 }
 
+/*
+ * The outgoing line is not emitted at all when the user has asked for reduced
+ * motion, so this block only has to cover the incoming line. It keeps the fade and
+ * drops the movement: a line that changes with no indication at all is worse for
+ * everyone, and a cross-fade is the minimum that still says "this changed".
+ */
 @media (prefers-reduced-motion: reduce) {
-  .lyric-now.is-exit {
-    animation: none;
-    opacity: 0;
+  .lyric-now {
+    transition:
+      opacity 140ms linear,
+      color 140ms linear;
   }
 }
 
@@ -129,13 +173,18 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  min-height: 56px;
+  gap: 12px;
+  /* The current line's slot, so the stack does not resize when the singing comes
+     back in. */
+  min-height: calc(2lh + var(--sp-2));
+  max-width: 30ch;
+  font-size: 40px;
+  line-height: 1.24;
 }
 
 .lyrics-waiting i {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
   border-radius: var(--r-full);
   background: var(--fg-0);
   animation: lyric-dot 1.5s var(--ease-in-out) infinite;
@@ -172,15 +221,26 @@
 /*
  * The current line. White and heavy, and nothing else — no fill, no gradient, no
  * per-word state. Its job is to be the thing you read, and everything about the
- * next three lines exists to make this one obvious.
+ * lines below exists to make this one obvious.
+ *
+ * The sizes are literals rather than scale steps, and the reason is worth
+ * recording: the whole point of this pane is that one line has to be readable from
+ * across a room, so it sits above the largest step in the type scale rather than
+ * on it. 40 / 26 / 21 is a 1.54 ratio between the current line and the first
+ * upcoming one, which is what puts the hierarchy in the glance rather than in the
+ * reading.
  */
 .lyric-now.is-now {
-  font-size: var(--fs-d1);
+  font-size: 40px;
   font-weight: var(--fw-display);
-  line-height: var(--lh-d1);
+  line-height: 1.24;
   letter-spacing: var(--track-display);
   color: var(--fg-0);
   opacity: 1;
+  /* Wide enough that a normal line does not wrap. At 17ch the Vietnamese lines in
+     this library broke across three rows, which turned one readable sentence into
+     a paragraph and made the current line look like a heading rather than a lyric. */
+  max-width: 30ch;
 }
 
 /*
@@ -188,23 +248,24 @@
  *
  * The steps are wide on purpose. Two shades of "slightly dimmer" is a gradient
  * with no destination, and the second line ended up as legible as the first, so
- * the eye had no idea where to land. The last one drops to 34%, which is present
- * enough to be read on purpose and quiet enough not to compete.
+ * the eye had no idea where to land.
  */
 .lyric-now.is-next-1 {
-  font-size: var(--fs-lg);
+  font-size: 26px;
   font-weight: var(--fw-medium);
-  line-height: var(--lh-lg);
+  line-height: 1.32;
   color: var(--fg-2);
-  opacity: 0.66;
+  opacity: 0.6;
+  max-width: 34ch;
 }
 
 .lyric-now.is-next-2 {
-  font-size: var(--fs-md);
+  font-size: 21px;
   font-weight: var(--fw-body);
-  line-height: var(--lh-md);
+  line-height: 1.4;
   color: var(--fg-2);
-  opacity: 0.34;
+  opacity: 0.3;
+  max-width: 38ch;
 }
 
 /*

@@ -74,8 +74,13 @@ interface NowPlayingProps {
 const ART_W = 420
 /** Widest and narrowest the lyrics column is allowed to be. */
 const INFO_MIN = 340
-const INFO_MAX = 860
-const INFO_DEFAULT = 620
+const INFO_MAX = 1000
+/**
+ * The default. Sized for the lyric font rather than for the artwork: a 40px line
+ * wraps after about six words in a 620px column, which turned one readable
+ * sentence into a two-line block and left the right of the window empty.
+ */
+const INFO_DEFAULT = 720
 /** How far one arrow press on the splitter moves the column. */
 const SPLIT_STEP = 24
 
