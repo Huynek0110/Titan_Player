@@ -66,6 +66,30 @@ const connect = async (p, match) => {
 }
 
 const main = await connect(port, (t) => !/mini\.html/.test(t.url))
+
+/*
+ * Hide the bar before leaving, on every path.
+ *
+ * The bar is a floating window over the desktop, not a panel inside another one,
+ * so it does not go away when this process exits -- it stays there, always on
+ * top, until something hides it. Every early exit below would otherwise leave
+ * one sitting in front of whoever is at the machine, in a window that cannot be
+ * dismissed by clicking whatever is behind it.
+ */
+const cleanup = async () => {
+  try {
+    await main.evaluate(`(() => { window.titan.hideMini(); return true })()`)
+    await new Promise((r) => setTimeout(r, 400))
+    console.log("bar hidden")
+  } catch {
+    // The app may already be gone. Nothing left to tidy.
+  }
+}
+
+const die = async (code) => {
+  await cleanup()
+  process.exit(code)
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // --- 1. open it, from the main window's own button ------------------------
@@ -88,7 +112,7 @@ for (const p of pages) console.log(`  ${p.url.split(/[\\/]/).pop()}`)
 const miniTarget = pages.find((p) => /mini\.html/.test(p.url))
 if (!miniTarget) {
   console.log("\nRESULT: FAIL — no window is showing mini.html.")
-  process.exit(1)
+  await die(1)
 }
 
 const mini = await connect(port, (t) => /mini\.html/.test(t.url))
@@ -145,16 +169,16 @@ console.log("\nmini state:", JSON.stringify(state, null, 2))
 
 if (!state.hasPanel) {
   console.log("\nRESULT: FAIL — the window loaded but rendered no panel.")
-  process.exit(1)
+  await die(1)
 }
 if (state.hasTitanApi !== "undefined") {
   console.log("\nRESULT: FAIL — the bar can see the main window's `window.titan`.")
   console.log("It is supposed to have `titanMini` only, so its document is not isolated.")
-  process.exit(1)
+  await die(1)
 }
 if (state.title === "Nothing playing") {
   console.log("\nRESULT: FAIL — a track is playing in the main window but the bar says nothing is.")
-  process.exit(1)
+  await die(1)
 }
 console.log(`\nOK — the bar learned "${state.title}" and the cover ${state.artLoaded ? "loaded" : "did NOT load"}.`)
 
@@ -182,7 +206,7 @@ console.log("main audio after: ", JSON.stringify(after))
 if (before.paused === after.paused) {
   console.log("\nRESULT: FAIL — clicking the bar's play button did not change the main")
   console.log("window's audio element. The two windows are not connected.")
-  process.exit(1)
+  await die(1)
 }
 console.log("\nOK — a button in the second window drove the first window's audio.")
 
@@ -201,4 +225,5 @@ console.log("glass on the pill:", JSON.stringify(glass))
 const res = await mini.send("Page.captureScreenshot", { format: "png" })
 writeFileSync(out, Buffer.from(res.result.data, "base64"))
 console.log(`\nsaved ${out}`)
-process.exit(0)
+
+await die(0)

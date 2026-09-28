@@ -16,7 +16,13 @@ better than Spotify. Ships as both a portable `.exe` and an NSIS installer.
 - `tsc --noEmit -p tsconfig.web.json` — **clean**
 - `npm run dev` — **runs.** HMR confirmed working, so the dev-only CSP relaxation is
   correct. Screenshots taken from a live window.
-- `npm run dist` — **builds.** NSIS installer and portable `.exe` produced.
+- `npm run dist` — **builds and the packaged app is verified.** NSIS installer
+  and portable `.exe` produced (`release/titan-player-0.1.0-setup.exe`,
+  `release/titan-player-0.1.0-portable.exe`, both ~107 MB). Checked against
+  `release/win-unpacked/titan-player.exe`, i.e. the real `app.asar` and not a dev
+  build: the lyrics pane aligns, and the mini player opens as a second window
+  with `window.titan` absent from its document, learns the current track, and
+  drives the main window's audio element from its own play button.
 - Audio confirmed playing: `currentTime` advances, no media error.
 
 ### The mistake that cost two build cycles
@@ -40,10 +46,13 @@ Every component has a colocated `.css` file.
 
 ### Still to do
 
-1. `npm run dist` and verify the packaged app.
-2. `scripts/README.md` documents the CDP diagnostics. Use
+1. `scripts/README.md` documents the CDP diagnostics. Use
    `shot-nowplaying-quiet.mjs`, not `shot-nowplaying.mjs`, when sound is not
    wanted — the first pins the volume to zero, the second plays the track.
+2. **The word-level sweep is unverified.** It only renders when the source carries
+   word timings, which locally means Enhanced LRC, and the test library has none —
+   so that branch has never actually executed. It typechecks, which is not the
+   same thing. It needs an `.lrc` with `<mm:ss.xx>` word tags beside one track.
 
 Everything else on the original list is complete: `electron-builder.yml`,
 `build/icon.png` (1024×1024, rendered from `icon.svg` by
