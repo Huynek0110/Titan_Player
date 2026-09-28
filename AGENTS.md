@@ -202,6 +202,29 @@ Each of these looked correct in review and was invisible until the app ran.
 - **PowerShell blocks `.ps1` shims on this machine** — use `npm.cmd`, `npx.cmd`.
 - **Synthetic mouse clicks from PowerShell never reached the window.** Use CDP
   `Input.dispatchMouseEvent` via `scripts/play-a-track.mjs`.
+- **`composite: true` + `noEmit` still writes `tsconfig.*.tsbuildinfo`, and a
+  hand-edited `.d.ts` is then ignored.** A wrong import path in an `env.d.ts`
+  produced a correct-looking build for several minutes *after* it had been fixed.
+  Delete both `.tsbuildinfo` files before trusting a typecheck that should have
+  changed.
+- **`skipLibCheck: true` hides errors inside your own `.d.ts` files**, and a
+  hand-written `env.d.ts` is one. A bad import there becomes `any` with no
+  diagnostic, and the only symptom is an implicit `any` somewhere far away. Run
+  `npx.cmd tsc -p tsconfig.web.json --noEmit --skipLibCheck false` when a global
+  declared in a `.d.ts` is not taking effect. The mini bar hit this on its first
+  compile: `src/renderer/src/mini/env.d.ts` needs `../../../preload` — **three**
+  levels up, not two — and the wrong path was completely silent.
+- **A `const` referenced above its own declaration in a preload throws a
+  temporal dead zone error, which Electron reports as "preload failed to load"**
+  rather than as the line that caused it. Both `contextBridge.exposeInMainWorld`
+  calls are at the bottom of `src/preload/index.ts`, after both objects.
+- **PowerShell string surgery corrupts UTF-8 and mangles multi-line `git commit -m`.**
+  A backtick inside a commit message is eaten, so messages go through a file
+  written with `[System.IO.File]::WriteAllText` and a BOM-less UTF8 encoding —
+  `Set-Content -Encoding utf8` adds a BOM and the commit subject starts with
+  `﻿`. For multi-line file surgery inside a source file, a `node` one-liner that
+  slices by line number is more reliable than either, because the `edit` tool
+  cannot match text containing the file's own em-dashes and quotes.
 
 ## Toolchain (installed and verified)
 
@@ -228,6 +251,27 @@ PowerShell on this box blocks `.ps1` shims — use `npm.cmd` / `npx.cmd`.
 - Produce **both** a portable `.exe` and an NSIS installer.
 - Library defaults to `%USERPROFILE%\Music`, is changeable, and supports
   adding several folders that merge into one library.
+- **Keep AGPL-3.0** rather than going back to MIT, and **no in-app licence
+  banner.** The banner was proposed and then declined: AGPL only creates
+  obligations when the program is *conveyed* to someone, running it locally
+  triggers none, and the repository already carries a `LICENSE` and
+  `NOTICE.md`, which is what the licence actually requires of a distribution.
+  Do not re-add it without being asked.
+
+## Licence
+
+AGPL-3.0-or-later, and that is a consequence of a choice, not an accident.
+
+`Wave Player` is MIT. **`Liquify` and `spicetify-glassify` are AGPL-3.0**, and
+the Liquid Glass surface in `src/renderer/src/lib/glass.ts` is derived from them.
+Deriving from AGPL code makes the whole work AGPL, so `LICENSE` (the verbatim
+FSF text) and `NOTICE.md` exist and `package.json` says
+`AGPL-3.0-or-later`.
+
+If the glass is ever rewritten from the technique alone, with no line taken from
+either project, the licence can go back to MIT. `RESEARCH-SPICETIFY-REFERENCES.md`
+records the technique in enough detail to do that without re-reading either repo.
+The lyrics work is not a constraint — that came from Wave Player, which is MIT.
 
 ## Technical decisions worth keeping
 
@@ -312,9 +356,59 @@ The current line's size is derived from the measured column width, not fixed: at
 literal 40px a Vietnamese lyric wraps to two rows in a narrow window, which breaks
 the rhythm worse than a slightly smaller type does.
 
-Rejected: `@applemusic-like-lyrics/react` and `lyric-kit` are both AGPL-3.0 and
-this project is MIT. `lrc-kit` 1.2.1 is a fine MIT alternative to the hand-rolled
-parser if the local one ever proves insufficient.
+Rejected: `@applemusic-like-lyrics/react` and `lyric-kit` are both AGPL-3.0. The
+project is AGPL now — for the glass, not for anything here — but the lyrics pane
+here is hand-rolled and working, so the reason is not licensing. `lrc-kit` 1.2.1
+is a fine MIT alternative to `src/shared/lyrics.ts` if the local one ever proves
+insufficient.
+
+## The floating mini player
+
+A second `BrowserWindow` (`src/main/mini-window.ts`, its own `mini.html` entry,
+its own `src/renderer/src/mini/` document) that floats over everything. It is a
+**remote control, not a second player**, and that is the whole design:
+
+**There is no `<audio>` element in the bar, and there must never be one.** The
+element lives in the main window's renderer and stays there. A second element
+means a second copy of the same file on a second clock, and the two drift inside
+a minute with no way to resynchronise that does not involve a visible jump.
+
+So every transport verb is forwarded to the main process, which relays it to
+whichever window owns the audio, and the main window runs it through the *same*
+function its own buttons call. There is exactly one implementation of "next
+track" in the app, which is the reason to do it this way rather than giving the
+bar its own queue: two queues over one library desynchronise the first time a
+track is hidden or removed in one of them.
+
+**The position on the bar is an estimate, not a reading.** Packets go out four
+times a second; the playhead interpolates between them from `performance.now()` —
+monotonic, unlike `Date.now()`, which can step and would make the bar jump with
+no cause anyone could find. The bar's `--p` is written from a rAF loop, never
+React state, for the same reason the lyrics sweep is.
+
+Things that were not obvious and are worth not rediscovering:
+
+- **The glass is on the transport pill, not on the panel.** The window is
+  transparent, so the panel has nothing behind it to refract — a `backdrop-filter`
+  over an empty backdrop is a no-op that looks like a bug. The pill sits on the
+  opaque panel, which is the only place in that window where refraction is real.
+- **Both windows share one preload file**, so the preload branches on
+  `process.argv` looking for `--titan-surface=mini`, passed in via
+  `webPreferences.additionalArguments`. Branching on `location.pathname` would
+  also work and would also silently remove a security boundary the first time a
+  file is renamed. `scripts/probe-mini-player.mjs` asserts that `window.titan` is
+  `undefined` in the bar.
+- **The seek bar is last in the DOM.** It has a definite column span and an
+  automatic row, so sitting in the middle it consumed row 2 and pushed the mute
+  and close buttons onto an implicit third row, which shortened the row above and
+  made the artwork look cropped.
+- **`window-all-closed` only fires on the *last* window**, and the bar hides
+  rather than closes when dismissed, so without `mini.dispose()` in both that
+  handler and the main window's `closed` event the process can survive with
+  nothing on screen, or leave a floating player whose every button does nothing
+  because the audio element it was driving has just been destroyed.
+- The bar's own ✕ and the window manager's close both `preventDefault` and hide.
+  Closing the bar is not closing the app.
 
 ## Design direction
 

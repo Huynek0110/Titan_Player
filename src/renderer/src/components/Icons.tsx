@@ -201,6 +201,22 @@ export const Queue = (p: IconProps) => (
   </Icon>
 )
 
+/**
+ * The floating mini player.
+ *
+ * A small panel lifted off a surface, which is what the thing is: the same idea
+ * as the expand glyph but with a visible edge under it, so it does not read as
+ * "maximise" next to the real maximise in the title bar.
+ */
+export const MiniPlayerGlyph = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="6.5" width="18" height="11" rx="2.6" />
+    <path d="M3 14.2h18" />
+    <circle cx="6.6" cy="11.4" r="1.5" />
+    <path d="M17.4 10.2v2.4M16.2 11.4h2.4" />
+  </Icon>
+)
+
 export const Plus = (p: IconProps) => (
   <Icon {...p}>
     <path d="M12 5.5v13" />

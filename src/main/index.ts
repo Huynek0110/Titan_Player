@@ -11,6 +11,8 @@ import {
   configureAudioExtensions,
 } from "./protocol.js"
 import { lookupLyrics, forgetLyrics, type LookupTarget } from "./lyrics-online.js"
+import * as mini from "./mini-window.js"
+import type { MiniState } from "../shared/mini.js"
 import {
   createPlaylist,
   deletePlaylist,
@@ -87,6 +89,21 @@ function createWindow(): BrowserWindow {
   })
 
   window.once("ready-to-show", () => window.show())
+
+  /*
+   * The bar outlives nothing, and the app has to go down with this window.
+   *
+   * Two things break without this. `window-all-closed` only fires when the *last*
+   * window closes, so a hidden mini window would keep the process alive with no
+   * window to show and no audio element to control. And closing the main window
+   * with the bar open would leave a floating player on screen whose every button
+   * does nothing, because the `<audio>` it was driving has just been destroyed.
+   */
+  window.on("closed", () => {
+    mini.dispose()
+    if (mainWindow === window) mainWindow = null
+  })
+  mini.attachOwner(window)
 
   const notifyMaximize = () => send("window:maximize-changed", window.isMaximized())
   window.on("maximize", notifyMaximize)
@@ -382,6 +399,23 @@ if (!gotLock) {
     handleMediaProtocol()
     await loadState()
     registerIpc()
+    mini.registerIpc()
+
+    /*
+     * The main window *publishes*; the main process *relays*.
+     *
+     * The bar is not allowed to ask the main window anything except transport
+     * commands, and the main window is not allowed to reach into the bar's
+     * document. Everything passes through here, which means the set of things the
+     * bar can do is a closed list in two places and neither side can grow a new
+     * capability by accident.
+     */
+    ipcMain.on("mini:publish", (_event, state: MiniState) => mini.push(state))
+    ipcMain.on("mini:show", () => mini.show(mainWindow))
+    ipcMain.on("mini:hide", () => mini.hide())
+    ipcMain.on("mini:toggle", () => mini.toggle(mainWindow))
+    ipcMain.handle("mini:is-open", () => mini.isVisible())
+
     mainWindow = createWindow()
 
     // `before-quit` does not block, and the promise was being discarded, so any
@@ -405,6 +439,11 @@ if (!gotLock) {
 }
 
 app.on("window-all-closed", () => {
+  // The bar is a satellite, never a reason to keep running. `window-all-closed`
+  // fires on the *last* window, and the bar is hidden rather than closed when
+  // the user dismisses it, so without this the process could survive with
+  // nothing on screen.
+  mini.dispose()
   if (process.platform !== "darwin") app.quit()
 })
 

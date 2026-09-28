@@ -1,0 +1,299 @@
+/*
+ * The floating bar.
+ *
+ * A 76px panel that lives over the desktop, so every choice here is about what
+ * survives at that size and on an unknown background.
+ *
+ * The panel is opaque. Not translucent: the window is transparent, and a
+ * translucent panel over a transparent window has nothing between it and the
+ * desktop, which is a different colour on every machine. A near-opaque surface
+ * with a shadow is the only version of this that looks the same everywhere, and
+ * it is also what gives the transport pill something to refract — see
+ * `MiniPlayer.tsx` for why the glass is on the pill and not on the panel.
+ */
+
+.mini {
+  height: 100%;
+  padding: 0;
+}
+
+.mini-panel {
+  position: relative;
+  /*
+   * Four columns, not three. There are five children — artwork, title, transport,
+   * the tail, and the progress bar — and the bar spans the full width on its own
+   * row. With only three columns the tail had nowhere to go on the first row and
+   * silently became a third row, which pushed the panel's content up and made the
+   * artwork look cropped.
+   */
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  grid-template-rows: 1fr 3px;
+  align-items: center;
+  gap: 0 8px;
+  height: 100%;
+  padding: 0 8px 0 8px;
+  border-radius: 14px;
+  background: rgba(16, 16, 22, 0.94);
+  /* A rim, because on a light desktop a dark panel with no edge disappears into
+     whatever is behind it. Two shadows, not one: a tight light one for the
+     edge and a wide dark one to lift the panel off the background. */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 28px rgba(0, 0, 0, 0.55),
+    0 2px 6px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+/* The drag strip, on its own row above the content. */
+.mini-drag {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 16px;
+  -webkit-app-region: drag;
+  app-region: drag;
+  cursor: grab;
+}
+
+.mini-drag:active {
+  cursor: grabbing;
+}
+
+/* --- artwork ------------------------------------------------------------ */
+
+.mini-art {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.mini-art-empty {
+  display: grid;
+  place-items: center;
+  font-weight: var(--fw-display);
+  font-size: 16px;
+  color: var(--fg-2);
+}
+
+/* --- title -------------------------------------------------------------- */
+
+.mini-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.mini-meta:hover .mini-title {
+  color: var(--fg-0);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mini-title,
+.mini-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-title {
+  font-size: 12.5px;
+  font-weight: var(--fw-semi);
+  color: var(--fg-1);
+  transition: color var(--fast) var(--ease);
+}
+
+.mini-artist {
+  font-size: 11px;
+  color: var(--fg-3);
+}
+
+/* --- transport ---------------------------------------------------------- */
+
+/*
+ * The only surface in the app carrying real Liquid Glass, and it is here because
+ * it is the only one with something opaque behind it. A displacement map refracts
+ * what is behind the element, so a glass surface over a transparent window has
+ * nothing to work with — the panel itself is the backdrop here.
+ */
+.mini-transport {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+}
+
+.mini-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  transition:
+    color var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.mini-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.mini-btn:hover {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.mini-btn:active {
+  transform: scale(0.88);
+}
+
+.mini-btn:focus-visible {
+  outline: 2px solid var(--fg-0);
+  outline-offset: 1px;
+}
+
+.mini-btn-play {
+  width: 32px;
+  height: 32px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.mini-btn-play svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mini-btn-play:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/*
+ * The "one" badge on repeat.
+ *
+ * A repeat that silently plays the same track forever is the kind of thing a
+ * listener only notices when it is already annoyed them, so the third state has
+ * to be visible at a glance rather than only in the tooltip.
+ */
+.mini-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 8px;
+  font-weight: var(--fw-bold);
+  line-height: 1;
+  color: var(--fg-0);
+}
+
+.mini-btn.is-on {
+  color: var(--accent);
+}
+
+/* --- the seek bar -------------------------------------------------------- */
+
+.mini-progress {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: end;
+  height: 3px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  background: rgba(255, 255, 255, 0.1);
+  /* Grows on hover rather than always being a 3px target, which in a 76px window
+     would be a fifth of the height spent on a progress indicator. */
+  transition: height var(--fast) var(--ease);
+}
+
+.mini-progress:hover,
+.mini-progress:focus-visible {
+  height: 6px;
+}
+
+.mini-progress:focus-visible {
+  outline: 2px solid var(--fg-0);
+  outline-offset: 2px;
+}
+
+.mini-progress-fill {
+  display: block;
+  height: 100%;
+  /*
+   * `--p` is written from a rAF loop, never React state: a re-render per frame
+   * would be the most expensive thing in the app, and the position on this bar is
+   * an estimate between packets rather than a reading, so it belongs outside the
+   * reconciler entirely.
+   */
+  width: var(--p, 0%);
+  background: var(--fg-0);
+}
+
+/* --- the tail ------------------------------------------------------------ */
+
+.mini-tail {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.mini-btn-sm {
+  width: 26px;
+  height: 26px;
+}
+
+.mini-btn-sm svg {
+  width: 12px;
+  height: 12px;
+}
+
+/*
+ * Below this width the bar stops being able to show everything. Losing the title
+ * is worse than losing the transport, so the transport and the artwork stay and
+ * the text goes — the artwork is still an identification, and a row of five
+ * unlabelled icons is not.
+ */
+@media (max-width: 359px) {
+  .mini-meta {
+    display: none;
+  }
+
+  .mini-panel {
+    grid-template-columns: 44px auto auto;
+    gap: 0 6px;
+  }
+
+  .mini-transport {
+    justify-self: end;
+  }
+}

@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Heart,
   Lyrics,
+  MiniPlayerGlyph,
   Next,
   Pause,
   Play,
@@ -41,6 +42,18 @@ export default function PlayerBar({ player }: PlayerBarProps) {
    * mirror at the left and right ends.
    */
   const barRef = useGlassSurface<HTMLElement>({ displacement: 26, blur: 3, flat: 0.4 })
+
+  /*
+   * Whether the floating bar is on screen, tracked here because the button that
+   * toggles it lives in this component and the bar can also be dismissed from
+   * its own ✕ or from the window manager — three paths, and the main process is
+   * the only one that sees all three.
+   */
+  const [miniOpen, setMiniOpen] = useState(false)
+  useEffect(() => {
+    void window.titan.isMiniOpen().then(setMiniOpen).catch(() => undefined)
+    return window.titan.onMiniOpen(setMiniOpen)
+  }, [])
   const { currentTrack, queue, queueIndex, queueTracks, favourites, settings, shuffled, toggleFavourite } =
     store
   const { state, toggle, previous, next, seek, setVolume, toggleMute, cycleRepeat, toggleShuffle } = player
@@ -188,6 +201,21 @@ export default function PlayerBar({ player }: PlayerBarProps) {
           title="Queue  (Q)"
         >
           <Queue size={17} />
+        </button>
+
+        {/*
+          The floating mini player. `aria-pressed` rather than a state class alone,
+          because this opens a *window* and a screen reader needs to be told the
+          bar exists now rather than being left to notice a new surface.
+        */}
+        <button
+          className={`icon-btn state-btn ${miniOpen ? "on" : ""}`}
+          onClick={() => window.titan.toggleMini()}
+          aria-label="Mini player"
+          aria-pressed={miniOpen}
+          title="Mini player  (Ctrl+Shift+M)"
+        >
+          <MiniPlayerGlyph size={17} />
         </button>
 
         <div className="volume">

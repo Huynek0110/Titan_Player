@@ -8,7 +8,7 @@ album art.
 Ships as both a portable `.exe` you can copy anywhere and a normal NSIS
 installer.
 
-![Electron](https://img.shields.io/badge/electron-44-blue) ![React](https://img.shields.io/badge/react-19-61dafb) ![License](https://img.shields.io/badge/license-MIT-green)
+![Electron](https://img.shields.io/badge/electron-44-blue) ![React](https://img.shields.io/badge/react-19-61dafb) ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
 ---
 
@@ -202,4 +202,12 @@ WebAssembly something Chromium already does in C++.
 
 ## Licence
 
-MIT.
+AGPL-3.0-or-later. See [LICENSE](LICENSE) for the full text and
+[NOTICE.md](NOTICE.md) for attribution.
+
+It was MIT until the Liquid Glass surface and the lyrics presentation were brought
+in. Those come from Spicetify modifications — Wave Player (MIT) for the lyrics,
+and Liquify / spicetify-glassify (**AGPL-3.0**) for the glass — and deriving from
+AGPL code makes the whole work AGPL. The lyrics came from an MIT project, so if
+the glass is ever rewritten from the technique alone the licence can go back to
+MIT; `RESEARCH-SPICETIFY-REFERENCES.md` records enough detail to do that.

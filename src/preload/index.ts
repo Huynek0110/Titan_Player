@@ -6,6 +6,7 @@ import type {
   ScanProgress,
   ScanResult,
 } from "../shared/types.js"
+import type { MiniCommand, MiniState, MiniWindowCommand } from "../shared/mini.js"
 
 /**
  * What an online lookup needs. Metadata rather than a path or a URL, so the main
@@ -108,8 +109,145 @@ const api = {
   /** Forget a cached lookup so the next one reaches the network. */
   forgetLyrics: (target: LyricsLookupTarget): Promise<boolean> =>
     ipcRenderer.invoke("lyrics:lookup-forgot", target),
+
+  // --- the floating mini player ------------------------------------------
+  /*
+   * Two separate surfaces, because the bar and the main window are on opposite
+   * sides of the same conversation.
+   *
+   * `pushMini` is the main window *sending*: it hands the bar a state packet.
+   * `onMini` is the main window *listening* for the bar's commands, which the
+   * main process forwards verbatim so that there is one implementation of every
+   * transport action in the app.
+   *
+   * The bar itself gets a different global entirely — see `titanMini` at the
+   * bottom of this file. It has no `scan`, no `settings` and no filesystem
+   * access, because a 400px control strip does not need any of them, and the
+   * narrowest surface that works is the safest one.
+   */
+
+  /** Tell the bar what is playing. Silently dropped if the bar is closed. */
+  pushMini: (state: MiniState): void => {
+    ipcRenderer.send("mini:publish", state)
+  },
+  showMini: (): void => {
+    ipcRenderer.send("mini:show")
+  },
+  hideMini: (): void => {
+    ipcRenderer.send("mini:hide")
+  },
+  toggleMini: (): void => {
+    ipcRenderer.send("mini:toggle")
+  },
+  /**
+   * Whether the bar is currently on screen.
+   *
+   * The main window's own button has to reflect it, and the bar can be dismissed
+   * from three places — this button, its own ✕, and the window manager's close —
+   * so the renderer cannot be the one keeping the truth. A query covers the
+   * first paint and an event covers every change after it.
+   */
+  isMiniOpen: (): Promise<boolean> => ipcRenderer.invoke("mini:is-open"),
+  onMiniOpen: (handler: (open: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, open: boolean) => handler(open)
+    ipcRenderer.on("mini:open-changed", listener)
+    return () => ipcRenderer.removeListener("mini:open-changed", listener)
+  },
+  /** The bar's commands, forwarded by the main process to whichever window owns the audio. */
+  onMiniCommand: (handler: (command: MiniCommand) => void): (() => void) => {
+    const types: MiniCommand["type"][] = [
+      "play-pause",
+      "next",
+      "previous",
+      "seek",
+      "volume",
+      "toggle-mute",
+      "toggle-shuffle",
+      "cycle-repeat",
+      "toggle-favourite",
+      "open-now-playing",
+    ]
+    const listeners = types.map((type) => {
+      const fn = (_event: unknown, command: MiniCommand) => handler(command)
+      ipcRenderer.on(`mini-command:${type}`, fn)
+      return () => ipcRenderer.removeListener(`mini-command:${type}`, fn)
+    })
+    return () => listeners.forEach((off) => off())
+  },
 }
 
 export type TitanApi = typeof api
 
-contextBridge.exposeInMainWorld("titan", api)
+/**
+ * Which surface this preload is running in.
+ *
+ * The main process passes `--titan-surface=mini` in `additionalArguments` for the
+ * floating bar and nothing for the main window, and the two are told apart by that
+ * rather than by inspecting the document.
+ *
+ * This matters because both windows load the *same* preload file, and a preload
+ * that exposes `titan` unconditionally hands the main window's whole API —
+ * scanning, settings, playlists, the filesystem jail — to a 400px control strip.
+ * The narrowest surface in the app should be the one with the least reach, and
+ * checking the URL instead of an explicit flag would remove that guarantee the
+ * first time a file is renamed.
+ */
+const IS_MINI = process.argv.some((arg) => arg === "--titan-surface=mini")
+
+/**
+ * The mini bar's entire surface.
+ *
+ * Separate from `titan` on purpose, and exposed under a different name so the
+ * bar's document cannot reach the main window's API even if something in it
+ * tried. It can send commands, receive state, and ask to be moved. That is the
+ * whole vocabulary of a remote control.
+ */
+const miniApi = {
+  onState: (handler: (state: MiniState) => void): (() => void) => {
+    const listener = (_event: unknown, state: MiniState) => handler(state)
+    ipcRenderer.on("mini:state", listener)
+    return () => ipcRenderer.removeListener("mini:state", listener)
+  },
+
+  send: (command: MiniCommand): void => {
+    ipcRenderer.send("mini:command", command)
+  },
+
+  window: (command: MiniWindowCommand): void => {
+    ipcRenderer.send("mini:window", command)
+  },
+
+  /**
+   * The one URL the bar needs that the main window's API cannot give it.
+   *
+   * The main renderer is a *different document*, so `window.titan` does not
+   * exist there and it cannot call `coverUrl`. Media still has to come through
+   * the privileged scheme, because that is what makes the artwork readable from a
+   * window with no node integration — a `file://` image would be blocked by the
+   * same-origin policy and the cover would silently not paint.
+   */
+  coverUrl: (trackId: string, hasArtwork: boolean): string | null =>
+    hasArtwork ? `media://cover/${encodeURIComponent(trackId)}` : null,
+}
+
+export type TitanMiniApi = typeof miniApi
+
+/*
+ * Exactly one surface per window, and never both.
+ *
+ * The bar gets `titanMini` and nothing else — `titan` is not exposed, so there is
+ * no handle in that document that reaches scanning, settings, playlists or the
+ * filesystem jail. The main window gets `titan` and no `titanMini`, so the
+ * publisher and the command listener stay private to the side that owns them.
+ *
+ * Both of these run after both objects are declared, which is why they are at the
+ * bottom: `miniApi` is a `const`, and exposing it above its own declaration
+ * throws a temporal-dead-zone ReferenceError inside the preload — which
+ * Electron reports as the preload failing to load, not as the line that caused
+ * it.
+ */
+if (IS_MINI) {
+  contextBridge.exposeInMainWorld("titanMini", miniApi)
+} else {
+  contextBridge.exposeInMainWorld("titan", api)
+}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Lyrics } from "@shared/types"
 import { useStore } from "./state/store"
 import { usePlayer } from "./lib/usePlayer"
+import { useMiniBridge } from "./lib/useMiniBridge"
 import { extractPalette, applyPalette } from "./lib/palette"
 import { formatDuration } from "./lib/format"
 import { parseLrc } from "@shared/lyrics"
@@ -36,6 +37,19 @@ export default function App() {
   // reads the element directly rather than the `timeupdate`-driven state, which
   // only updates about four times a second.
   const getTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
+
+  // --- the floating mini player ------------------------------------------
+  /*
+   * Wired here rather than inside `usePlayer` because the bar needs three things
+   * the player does not have: the store (for the current track and favourites),
+   * the audio element itself (for the real clock), and the ability to change the
+   * main window's view. Passing all three in is clearer than teaching the audio
+   * engine about a second window.
+   */
+  const openNowPlaying = useCallback(() => {
+    store.setNowPlaying(true)
+  }, [store])
+  useMiniBridge(player, store, audioRef, openNowPlaying)
 
   // --- ambient palette follows the playing track -------------------------
   useEffect(() => {

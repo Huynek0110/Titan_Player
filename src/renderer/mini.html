@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Same policy as the main window, minus `connect-src` to the dev server and
+      minus HMR.
+
+      The mini bar is a second document with a second preload and its own, much
+      smaller, `window.titanMini` surface. It still needs `media:` for cover art,
+      which comes through the privileged scheme exactly as it does in the main
+      window — a `file://` image would be blocked by the same-origin policy and
+      the artwork would silently not paint, which is the failure that cost a
+      whole debugging session once already.
+
+      The one relaxation is that nothing here is allowed to *connect* anywhere.
+      The bar has no reason to reach the network, and the dev-only websocket
+      relaxation the main window needs for HMR is deliberately not repeated.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' media: blob: data:; media-src 'self' media: blob: data:; connect-src 'self' media:; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Titan Player</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/mini/main.tsx"></script>
+  </body>
+</html>

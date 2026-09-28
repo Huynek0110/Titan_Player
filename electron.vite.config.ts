@@ -29,7 +29,20 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, "src/renderer/index.html") },
+        /*
+         * Two documents.
+         *
+         * The floating mini player is a separate HTML page rather than a route
+         * inside the main one, because it is a separate `BrowserWindow` with its
+         * own preload and its own — much smaller — `window.titanMini` surface. A
+         * route would have put the main window's full API in reach of a 400px
+         * control strip, and would have made the main renderer bundle load in a
+         * window that has no use for it.
+         */
+        input: {
+          index: resolve(__dirname, "src/renderer/index.html"),
+          mini: resolve(__dirname, "src/renderer/mini.html"),
+        },
       },
     },
     plugins: [react()],

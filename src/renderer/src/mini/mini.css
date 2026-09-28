@@ -1,0 +1,46 @@
+/*
+ * The floating mini player's own document.
+ *
+ * Three things are different from the main window and all three are load-bearing.
+ *
+ * The background is transparent, because the window itself is transparent and
+ * the panel is a rounded rect drawn over it. The body must not paint a
+ * background or the rounded corners become a square of whatever that colour is,
+ * which is the single most common way a frameless transparent window ends up
+ * looking broken.
+ *
+ * There is no ambient wash and no grain. Both are painted by the main window's
+ * stylesheet onto `body`, and they are sized to a full-screen window; here they
+ * would cover the whole floating panel and hide the desktop behind it.
+ *
+ * Nothing here is draggable except the strip that says so, because
+ * `-webkit-app-region: drag` on a container makes every child undraggable unless
+ * the children opt back out. Transport buttons that silently refuse to be
+ * clicked are worse than a bar you cannot drag, so the rule is stated here
+ * rather than applied ad hoc further down.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* The main stylesheet paints the ambient wash and grain onto the root element.
+   This window is transparent by necessity, so both are undone explicitly — a
+   global that only applies to a full-screen window will happily make a floating
+   panel opaque. */
+body {
+  background: transparent !important;
+}
+
+body::before,
+body::after,
+#root::before,
+#root::after {
+  content: none !important;
+  display: none !important;
+}
