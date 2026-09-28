@@ -88,99 +88,20 @@
    *
    * Two earlier attempts both produced a visible hole, from opposite directions.
    * Fixed two-line slots keep the stack's height constant, but a one-line lyric
-   * then floats inside a two-line box — and whether its slack sat above or below
+   * then floats inside a two-line box -- and whether the slack sat above or below
    * decided whether the gap to the next line looked even or whether the line
    * looked detached. Bottom-aligning the slot fixed the current line and opened a
    * hole above each dim one.
    *
-   * So the slots are natural and the stack hangs from its top. The current line is
-   * first, so its top edge never moves whatever it wraps to, and only the dim lines
-   * below shift — which is far less noticeable than the line being sung jumping.
+   * So the slots are natural and the stack hangs from its top. And because every
+   * line is the same font size (see the state rules below), the block's height is
+   * now decided purely by how many rows each lyric wraps to -- which does not
+   * change as lines are promoted, because a line is the same size in all three
+   * states. The current line's top edge is therefore genuinely fixed.
    */
   max-width: 100%;
-  /*
-   * The line change is a change of *appearance*, never of position.
-   *
-   * Apple Music's synced lyrics float on the surface of blurred water: the current
-   * line resolves sharp and bright while the others recede and go soft, and
-   * nothing travels. Moving the text — the previous version slid the outgoing line
-   * up and away — reads as a scroll, which is the one thing this layout exists not
-   * to be.
-   *
-   * So the transition is on `opacity`, `filter` and `color`, none of which moves a
-   * pixel of layout. `filter` is excluded by the motion policy for anything larger
-   * than a caption; two lines of this size, changing once every few seconds, is
-   * the case where the depth cue *is* the effect.
-   */
-  transition:
-    opacity 340ms var(--ease),
-    filter 340ms var(--ease),
-    color 340ms var(--ease);
   cursor: pointer;
   text-wrap: balance;
-}
-
-/*
- * The line that was just left, dissolving in place.
- *
- * Absolutely positioned above the current line, so it occupies that space without
- * joining the flow — no reflow, and it does not disturb the rhythm of the lines
- * still to come.
- *
- * The offset is one gap rather than `bottom: 100%`, because the outgoing line was
- * the *previous* line of the same list, not a caption attached to this one. It
- * would have sat the same distance above the current line as the first upcoming
- * line does below it, and touching the line being sung reads as part of it.
- *
- * `EXIT_MS` in `LyricsPane.tsx` holds the node for marginally longer than this
- * animation runs, and the two have to agree.
- */
-.lyric-now.is-exit {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + var(--sp-6));
-  display: block;
-  max-width: 100%;
-  font-size: var(--lyric-next);
-  font-weight: var(--fw-medium);
-  line-height: 1.32;
-  color: var(--fg-2);
-  pointer-events: none;
-  text-align: right;
-  will-change: opacity, filter;
-  animation: lyric-exit 420ms var(--ease) forwards;
-}
-
-/*
- * No movement. The line blurs out and dims exactly where it already is, which
- * keeps the eye on the words being sung rather than on a travelling line. A
- * rise-and-fade was tried here and read as a scroll, which is the one thing this
- * layout is meant not to be. The blur is the effect: it is the difference between a
- * line that was here and a line that is now somewhere behind you.
- */
-@keyframes lyric-exit {
-  from {
-    opacity: 0.62;
-    filter: blur(0);
-  }
-  to {
-    opacity: 0;
-    filter: blur(4px);
-  }
-}
-
-/*
- * The outgoing line is not emitted at all when the user has asked for reduced
- * motion, so this block only has to cover the incoming line. It keeps the fade and
- * drops the movement: a line that changes with no indication at all is worse for
- * everyone, and a cross-fade is the minimum that still says "this changed".
- */
-@media (prefers-reduced-motion: reduce) {
-  .lyric-now {
-    transition:
-      opacity 140ms linear,
-      color 140ms linear;
-  }
 }
 
 /* --- the instrumental marker ------------------------------------------- */
@@ -201,8 +122,8 @@
      the singing comes back, so the block neither jumps nor leaves a hole. */
   min-height: 1lh;
   max-width: 100%;
-  font-size: var(--lyric-size, 40px);
-  line-height: 1.24;
+  font-size: var(--lyric-size, 34px);
+  line-height: 1.26;
 }
 
 .lyrics-waiting i {
@@ -242,57 +163,164 @@
 }
 
 /*
- * The current line. White and heavy, and nothing else — no fill, no gradient, no
- * per-word state. Its job is to be the thing you read, and everything about the
- * lines below exists to make this one obvious.
+ * The current line, and what comes next.
  *
- * The size comes from a custom property rather than a literal, because the
- * column is width-constrained: a fixed 40px in a narrow window wraps a Vietnamese
- * line onto two rows, and a two-row "current line" breaks the rhythm of the block
- * far more than a slightly smaller one does. `App.tsx` measures the column and
- * sets `--lyric-size` to whatever fits about forty characters on one row, clamped
- * so it never drops below readable or rises above the size the design wants.
+ * Every line is the *same* font size. The hierarchy is carried entirely by
+ * `transform: scale`, `filter: blur()`, colour and a glow — never by `font-size`.
+ * That is the whole trick, and it was found by getting it wrong repeatedly:
+ *
+ *  - font-size per state meant the current line's box changed height on every
+ *    lyric change, so the lines below it reflowed and the current line jumped.
+ *  - A bigger font wraps differently from a smaller one, so a one-row upcoming
+ *    line became a two-row current line, and the block's rhythm broke on exactly
+ *    the long lines. That is the "some lines look separated" complaint.
+ *  - Pinning each slot to a fixed height to stop the reflow made it worse: a
+ *    one-line lyric then floated inside a two-line box.
+ *
+ * A transform changes nothing about layout. Every line's box is the same size
+ * whatever state it is in, the wrapping is identical in all three states, and the
+ * promotion from "next" to "current" is a compositor-only change. The line
+ * change becomes a change of *appearance* — which is what it was always supposed
+ * to be.
+ *
+ * The two scale factors are chosen to land the *rendered* sizes on 1 : 0.74 : 0.6,
+ * which at a 35px base is 35 / 26 / 21 — the same three sizes the font-size
+ * ladder used to produce. So the hierarchy is as strong as it was, and unlike the
+ * ladder it costs no reflow. They read as small numbers because they are relative
+ * to a shared base, and the base is set once.
+ *
+ * A scale leaves visual slack above and below a shrunken line, equal to
+ * (1 − k) · height / 2 on each side. At 0.6 that is about a tenth of a line each
+ * side, which is why the gaps below are not tighter than they look: the lines
+ * look evenly spaced because the slack is symmetric and the centres are evenly
+ * spaced. It is also consistent with the blur, which says the same thing — that
+ * line is further away.
+ *
+ * The size itself comes from a custom property rather than a literal, because the
+ * column is width-constrained. `NowPlaying.tsx` measures it and sets whatever
+ * fits about forty characters on one row, clamped so a narrow window still
+ * produces a readable lyric.
+ */
+.lyric-now {
+  font-size: var(--lyric-size, 34px);
+  font-weight: var(--fw-display);
+  line-height: 1.26;
+  letter-spacing: var(--track-display);
+  max-width: 100%;
+  /* The scale grows leftward from the right edge, so every line still ends in the
+     same place. A centred origin would make the block's left edge breathe. */
+  transform-origin: right center;
+}
+
+/*
+ * The current line: sharp, white, and *lit*.
+ *
+ * The glow is what this design is really made of. Size and opacity alone mark a
+ * line by making it different; a three-layer halo makes it look like it is the
+ * only thing in the room emitting light, which is a much stronger cue and — more
+ * to the point — it does not touch layout, so it can be as strong as it likes.
+ * The outer layer is tinted with the artwork's accent, so the highlight belongs
+ * to this track rather than being generic white.
  */
 .lyric-now.is-now {
-  font-size: var(--lyric-size, 40px);
-  font-weight: var(--fw-display);
-  line-height: 1.24;
-  letter-spacing: var(--track-display);
-  color: var(--fg-0);
-  opacity: 1;
-  filter: none;
-  max-width: 100%;
+  color: #fff;
+  transform: scale(1);
+  filter: blur(0);
+  text-shadow:
+    0 0 12px rgba(255, 255, 255, 0.28),
+    0 0 44px rgba(255, 255, 255, 0.2),
+    0 0 88px var(--accent-glow, rgba(255, 255, 255, 0.16));
+  /*
+   * Promoted here and nowhere else. It used to be on every line, which gave a
+   * long song a hundred permanently-promoted compositor layers and cost more
+   * memory than it saved frames. Only the active line travels far enough to want
+   * the hint, and the line stepping down keeps its layer for the length of its
+   * own transition anyway.
+   */
+  will-change: transform, filter;
 }
 
 /*
  * What comes next, receding.
  *
- * Two things happen with distance, and both are needed. Opacity alone is a
- * gradient with no destination — two shades of "slightly dimmer" left the second
- * line as legible as the first, so the eye had nowhere to land. The blur is what
- * makes it depth rather than a fade: the current line sits on the surface and the
- * rest sit behind it. That is the effect Apple Music's lyrics are described as
- * having, and it is why the line change reads as a change of focus rather than as
- * text being replaced.
+ * Both cues are needed and neither is sufficient. Opacity alone is a gradient
+ * with no destination — two shades of "slightly dimmer" left the second line as
+ * legible as the first, so the eye had nowhere to land. The blur is what makes
+ * this depth rather than a fade: the current line sits on the surface and the
+ * rest sit behind it.
  */
 .lyric-now.is-next-1 {
-  font-size: var(--lyric-next, 26px);
-  font-weight: var(--fw-medium);
-  line-height: 1.32;
-  color: var(--fg-2);
-  opacity: 0.62;
-  filter: blur(1.1px);
-  max-width: 100%;
+  color: rgba(255, 255, 255, 0.46);
+  transform: scale(0.74);
+  filter: blur(0.8px);
 }
 
 .lyric-now.is-next-2 {
-  font-size: var(--lyric-far, 21px);
-  font-weight: var(--fw-body);
-  line-height: 1.4;
-  color: var(--fg-2);
-  opacity: 0.3;
-  filter: blur(2.4px);
-  max-width: 100%;
+  color: rgba(255, 255, 255, 0.26);
+  transform: scale(0.6);
+  filter: blur(1.9px);
+}
+
+/*
+ * The line-change transition.
+ *
+ * `transform` gets an *overshoot* curve — `cubic-bezier(.34, 1.3, .4, 1)` — while
+ * colour and blur get a plain ease-out. The asymmetry is the point: the size
+ * change is the thing the eye tracks, and an overshoot gives it a small pop as
+ * the line arrives, while the colour and focus settle without one. A single
+ * spring on all three made the text wobble, which is worse than no motion.
+ */
+.lyric-now {
+  transition:
+    color 420ms cubic-bezier(0.4, 0, 0.2, 1),
+    filter 420ms cubic-bezier(0.4, 0, 0.2, 1),
+    text-shadow 420ms ease,
+    transform 420ms cubic-bezier(0.34, 1.3, 0.4, 1);
+}
+
+/* --- the word sweep ------------------------------------------------------ */
+
+/*
+ * Where the source carries word-level timings — Enhanced LRC, which is the only
+ * local format that has them — each word is its own inline box carrying a
+ * gradient whose stop is written from the audio clock.
+ *
+ * The gradient is on the *words*, not the line, and each word has its own, so the
+ * sweep is continuous across a line that wraps: every word is independently
+ * filled or emptied and the boundary moves smoothly from one to the next. The
+ * line itself stays a single background, which is what stops a two-row line from
+ * restarting the sweep halfway down.
+ *
+ * Transparent glyphs let whatever is behind them show through, so the tight
+ * white layers of the active line's glow bleed between the letters and smear.
+ * That is why the karaoke rules below drop those and keep only the wide accent
+ * halo, which sits far enough out not to reach the text.
+ */
+.lyric-now.is-karaoke .w {
+  display: inline;
+  white-space: pre-wrap;
+}
+
+.lyric-now.is-karaoke.is-now .w {
+  background-image: linear-gradient(
+    90deg,
+    #fff 0 var(--p, 0%),
+    rgba(255, 255, 255, 0.42) var(--p, 0%) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.lyric-now.is-karaoke.is-now .w.is-done {
+  -webkit-text-fill-color: #fff;
+  color: #fff;
+  background-image: none;
+}
+
+.lyric-now.is-karaoke.is-now {
+  text-shadow: 0 0 72px var(--accent-glow, rgba(255, 255, 255, 0.16));
 }
 
 /*
@@ -300,21 +328,53 @@
  * aiming at an upcoming line previews it without losing your place.
  */
 .lyric-now:hover {
-  color: var(--fg-0);
-  opacity: 1;
+  color: rgba(255, 255, 255, 0.6);
+  filter: blur(0);
+}
+
+.lyric-now.is-now:hover {
+  color: #fff;
 }
 
 .lyric-now:focus-visible {
   outline: 2px solid var(--fg-0);
   outline-offset: 6px;
   border-radius: var(--r-sm);
-  opacity: 1;
   color: var(--fg-0);
+  filter: blur(0);
 }
 
+/*
+ * Reduced motion drops the travel and keeps the focus change.
+ *
+ * A line that changes with no indication at all is worse for everyone, so the
+ * blur and colour still move — they are the part that says *this* line is the one
+ * being sung. Only the scale and the glow go, because those are the parts that
+ * read as movement.
+ *
+ * The word sweep goes entirely. It is a continuously moving thing driven from the
+ * audio clock, which is the clearest possible case of what the preference is
+ * about, and the words stay legible — they are simply all solid, which is what the
+ * non-sung lines already do.
+ */
 @media (prefers-reduced-motion: reduce) {
   .lyric-now {
-    transition: none;
+    transition:
+      color 300ms linear,
+      filter 300ms linear;
+    transform: none !important;
+    will-change: auto;
+  }
+
+  .lyric-now.is-now {
+    text-shadow: none;
+    will-change: auto;
+  }
+
+  .lyric-now.is-karaoke.is-now .w {
+    background-image: none;
+    -webkit-text-fill-color: #fff;
+    color: #fff;
   }
 }
 

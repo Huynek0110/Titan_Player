@@ -249,6 +249,12 @@ export function applyPalette(palette: Palette): void {
   // light falling off an object. It can afford more than the full-window wash.
   root.style.setProperty("--glow-1", tinted(palette.primary, 0.3))
   root.style.setProperty("--glow-2", tinted(c, 0.2))
+
+  // The outer halo on the current lyric line, tinted with the artwork so the
+  // highlight belongs to this track rather than being generic white. A quarter
+  // strength, because `text-shadow` blur radii stack and three of them at the
+  // wash strength turns the line into a smear.
+  root.style.setProperty("--accent-glow", tinted(palette.primary, 0.4))
 }
 
 /** Pick black or white text for a background colour, by relative luminance. */

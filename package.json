@@ -4,7 +4,7 @@
   "description": "Titan Player - a beautiful local music player for Windows",
   "main": "./out/main/index.js",
   "author": "Titan Player",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
   "scripts": {

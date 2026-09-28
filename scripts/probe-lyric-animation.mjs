@@ -1,16 +1,34 @@
 /**
- * Does the line-change animation actually run?
+ * Does the line-change animation actually run, and does it run the way it is
+ * supposed to?
  *
- * Plays with the volume pinned to zero, then samples the DOM across a lyric
- * boundary and records every frame where the outgoing line is on screen, together
- * with its computed opacity and transform. That answers three separate questions
- * that a screenshot cannot: does the element ever appear, does the animation
- * apply to it, and how long does it last.
+ * This replaced a probe that looked for a fading outgoing line. There is no
+ * outgoing line any more — the line that *was* current is the same DOM node, now
+ * carrying `is-next-1`, because every line is keyed on its timestamp and stays
+ * mounted. The whole transition is a class change on a node that already exists.
+ *
+ * So the questions this answers are different ones:
+ *
+ *   1. Do all three lines really share one font size? If they do not, something
+ *      has reintroduced the reflow that broke the rhythm, and it is the defect
+ *      this whole design exists to avoid.
+ *   2. Is the hierarchy carried by `transform` rather than by size?
+ *   3. When the active line changes, does anything actually *interpolate* — or
+ *      does it snap? A snap means no transition is running, which is the failure
+ *      a static screenshot cannot see.
+ *
+ * Plays with the volume pinned to zero. Playback has to be arranged by
+ * `shot-nowplaying-quiet.mjs <port> <out> <row> <seek> keep-playing`, which
+ * double-clicks a row with real input events and so goes through the app's own
+ * code. A probe that calls `audio.play()` itself advances the clock but leaves the
+ * app's `isPlaying` false, so the lyrics pane stays on its paused backoff poll and
+ * the current line never moves — which looks exactly like a broken animation when
+ * the feature is fine.
  *
  * Usage: node scripts\probe-lyric-animation.mjs <cdpPort> [sampleMs]
  */
 const port = process.argv[2] ?? "9222"
-const sampleMs = Number(process.argv[3] ?? 90)
+const sampleMs = Number(process.argv[3] ?? 60)
 
 const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
 const page = list.find((t) => t.type === "page")
@@ -45,8 +63,7 @@ const evaluate = async (expression) => {
     awaitPromise: true,
     // Chromium's autoplay policy treats a script-initiated `play()` with no user
     // activation as a blocked play, so without this the element silently stays
-    // paused and every sample reads the same frame. A real click goes through
-    // `Input.dispatchMouseEvent` instead, which grants activation the honest way.
+    // paused and every sample reads the same frame.
     userGesture: true,
   })
   if (res.result?.exceptionDetails) return { threw: res.result.exceptionDetails.text }
@@ -63,42 +80,12 @@ await send("Runtime.enable")
  *
  * So the probe forces the other branch through Chromium's own media emulation.
  * That verifies the animation *works* for users who have motion enabled, and the
- * reduced-motion path is verified separately by reading what the component
- * renders.
+ * reduced-motion path is verified separately by reading what the component renders.
  */
 await send("Emulation.setEmulatedMedia", {
   features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
 })
 
-// No sound: muted, and the volume genuinely zero.
-//
-// Playback has to be started by clicking the app's own button, through a real
-// input event. Calling `audio.play()` from a script advances the clock but leaves
-// the app's `isPlaying` false, so the lyrics pane stays on its paused backoff poll
-// and the current line never moves — which looks exactly like the animation being
-// broken when it is only the test driving the player behind its back.
-/*
- * This probe only observes. Playback is arranged by whoever runs it, with
- * `shot-nowplaying-quiet.mjs <port> <out> <row> <seek> keep-playing`, which
- * double-clicks a row with real input events and therefore goes through the app's
- * own code.
- *
- * Every attempt to *start* playback from inside this file failed, and each failure
- * looked like the feature being broken:
- *
- *  - `audio.play()` from a script advances the clock but leaves the app's
- *    `isPlaying` false, so the lyrics pane stays on its paused backoff poll and
- *    the current line never moves.
- *  - `Runtime.evaluate` with `userGesture: true` unblocks `play()` but still
- *    bypasses the app's own state, so the pane never sees a change either.
- *  - Clicking `.np-play` is a toggle and only lands when the view is open and the
- *    button is where `getBoundingClientRect` claims, so a second run pauses what
- *    the first started.
- *
- * Observing beats starting. The probe reports the clock span and the number of
- * distinct lines, so a stopped clock is distinguishable from a broken animation
- * rather than being reported as the animation.
- */
 const state = await evaluate(`(() => {
   const a = document.querySelector('audio')
   if (!a) return { error: 'no audio element' }
@@ -121,40 +108,42 @@ if (state.paused) {
   process.exit(1)
 }
 
-// Whether the user has asked for reduced motion, which changes the answer.
 const motion = await evaluate(
   `matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduce' : 'no-preference'`,
 )
 console.log("prefers-reduced-motion:", motion)
 
-// Sample fast enough to catch a 380ms animation.
+/*
+ * Reads the scale out of the computed transform matrix.
+ *
+ * A matrix rather than `transform`, because a transition on `transform` resolves
+ * to `matrix(...)` and there is no readable `scale()` to compare. m11 is the
+ * horizontal scale; the stack is right-aligned so only that axis is in play.
+ */
+const READ = `(() => {
+  const a = document.querySelector('audio')
+  const nodes = [...document.querySelectorAll('.lyric-now')]
+  const now = nodes.find(n => n.classList.contains('is-now'))
+  const scaleOf = n => {
+    const m = new DOMMatrixReadOnly(getComputedStyle(n).transform)
+    return Number(m.a.toFixed(4))
+  }
+  return {
+    t: Number((a?.currentTime ?? 0).toFixed(2)),
+    text: now ? now.innerText.trim().slice(0, 26) : null,
+    sizes: nodes.map(n => Math.round(parseFloat(getComputedStyle(n).fontSize))),
+    nowScale: now ? scaleOf(now) : null,
+    nowFilter: now ? getComputedStyle(now).filter : null,
+    nowShadow: now ? getComputedStyle(now).textShadow : null,
+    scales: nodes.map(scaleOf),
+    paused: a?.paused,
+  }
+})()`
+
 const samples = []
 const started = Date.now()
 while (Date.now() - started < 22000) {
-  const s = await evaluate(`(() => {
-    const exit = document.querySelector('.lyric-now.is-exit')
-    const now = document.querySelector('.lyric-now.is-now')
-    const a = document.querySelector('audio')
-    return {
-      t: Number((a?.currentTime ?? 0).toFixed(2)),
-      now: now ? now.innerText.trim().slice(0, 24) : null,
-      hasExit: Boolean(exit),
-      exitText: exit ? exit.innerText.trim().slice(0, 24) : null,
-      exitOpacity: exit ? getComputedStyle(exit).opacity : null,
-      // The filter is what the exit actually animates now. The line dissolves in
-      // place rather than travelling, so the transform stays "none" throughout,
-      // and sampling only that would report a line that appeared and vanished
-      // without any visible change. The box is sampled too, to prove it holds
-      // still.
-      exitFilter: exit ? getComputedStyle(exit).filter : null,
-      exitTransform: exit ? getComputedStyle(exit).transform : null,
-      exitTop: exit ? Math.round(exit.getBoundingClientRect().top) : null,
-      exitAnim: exit ? getComputedStyle(exit).animationName : null,
-      paused: a?.paused,
-      volume: a?.volume,
-      muted: a?.muted,
-    }
-  })()`)
+  const s = await evaluate(READ)
   if (s && !s.threw) samples.push(s)
   await new Promise((r) => setTimeout(r, sampleMs))
 }
@@ -162,71 +151,75 @@ while (Date.now() - started < 22000) {
 // Stop again so nothing keeps playing after the probe.
 await evaluate(`(() => { const a = document.querySelector('audio'); if (a) a.pause(); return true })()`)
 
-const withExit = samples.filter((s) => s.hasExit)
 const times = samples.map((s) => s.t)
 const span = times.length ? Math.max(...times) - Math.min(...times) : 0
-const distinct = new Set(samples.map((s) => s.now).filter(Boolean)).size
-console.log(`\nsamples: ${samples.length}, playback span: ${span.toFixed(1)}s, distinct current lines: ${distinct}`)
-console.log(`with an outgoing line: ${withExit.length}`)
+const changes = samples.filter((s, i) => i > 0 && s.text !== samples[i - 1].text).length
+console.log(
+  `\nsamples: ${samples.length}, playback span: ${span.toFixed(1)}s, line changes: ${changes}`,
+)
 
-if (withExit.length === 0) {
-  console.log("\nRESULT: the outgoing line never appeared. The exit state is not being set.")
-  const lines = samples.map((s) => s.now).filter(Boolean)
-  const changes = lines.filter((v, i) => i > 0 && v !== lines[i - 1]).length
-  console.log(`current line changed ${changes} time(s) during playback, so the display is live.`)
+if (changes === 0) {
+  console.log("\nRESULT: the current line never changed. Nothing to check.")
   process.exit(1)
 }
 
-console.log("\n=== every sample where the outgoing line was present ===")
-for (const s of withExit) {
-  console.log(
-    `t=${String(s.t).padStart(6)}  "${s.exitText}"  opacity=${s.exitOpacity}  ` +
-      `filter=${s.exitFilter}  top=${s.exitTop}  animation=${s.exitAnim}`,
-  )
+// --- 1. one font size for every line ------------------------------------
+const sizeSets = new Set(samples.flatMap((s) => s.sizes).map(String))
+console.log(`\n=== font sizes seen across every line, every sample ===`)
+console.log(`  ${[...sizeSets].sort((a, b) => a - b).join(", ")}`)
+if (sizeSets.size > 1) {
+  console.log("\nRESULT: FAIL — lines have different font sizes. That reintroduces the")
+  console.log("reflow the scale-based hierarchy exists to avoid.")
+  process.exit(1)
+}
+console.log("  OK — one size everywhere, so promotion cannot reflow anything.")
+
+// --- 2. the hierarchy is in the transform -------------------------------
+const settled = samples.filter((s) => s.nowScale !== null)
+const maxScale = Math.max(...settled.map((s) => s.nowScale))
+const minScale = Math.min(...settled.map((s) => s.nowScale))
+console.log(`\n=== scale on the current line ===`)
+console.log(`  range ${minScale.toFixed(3)} .. ${maxScale.toFixed(3)}`)
+if (maxScale - minScale < 0.001) {
+  console.log("  steady at one value — the *other* lines' scales carry the hierarchy:")
+  const other = new Set(settled.flatMap((s) => s.scales).map((n) => n.toFixed(2)))
+  console.log(`  every line's scale, across every sample: ${[...other].sort().join(", ")}`)
+} else {
+  console.log("  varies — that is the transition running, sampled mid-flight")
 }
 
-const first = withExit[0]
-const last = withExit[withExit.length - 1]
-console.log(
-  `\nvisible for ~${Math.round((withExit.length * sampleMs))}ms  ` +
-    `opacity ${first.exitOpacity} -> ${last.exitOpacity}  ` +
-    `filter ${first.exitFilter} -> ${last.exitFilter}`,
-)
-
+// --- 3. does anything interpolate, or snap? ----------------------------
 /*
- * The whole point of the effect is that nothing travels, so this has to be checked
- * per exit rather than across the whole run.
- *
- * The outgoing line is anchored above the *current* line, and the current line is
- * one or two rows tall depending on the lyric, so different exits legitimately sit
- * at different y. Comparing across the run would report that as movement when it
- * is just the anchor being a different height. Within one exit the box must not
- * move at all.
+ * For each line that was current, look at the samples that follow it. If a
+ * transition is running, at least one of them must show a scale strictly between
+ * the shrunken value and 1. A jump straight to 1 means the class changed and
+ * nothing animated.
  */
-const byExit = new Map()
-for (const s of withExit) {
-  const key = s.exitText
-  if (!byExit.has(key)) byExit.set(key, [])
-  byExit.get(key).push(s)
+const BY_TEXT = new Map()
+for (const s of samples) {
+  if (!s.text) continue
+  if (!BY_TEXT.has(s.text)) BY_TEXT.set(s.text, [])
+  BY_TEXT.get(s.text).push(s)
 }
-console.log("\n=== stationary check, per outgoing line ===")
-let anyMoved = false
-for (const [text, group] of byExit) {
-  const tops = new Set(group.map((s) => s.exitTop))
-  const moved = tops.size > 1
-  if (moved) anyMoved = true
+
+const SHARP = 0.995
+const SHRUNK = 0.65
+console.log(`\n=== interpolation, per line that was current ===`)
+let sawTransition = false
+for (const [text, group] of BY_TEXT) {
+  const scales = group.map((s) => s.nowScale)
+  // The frames while this line was settling in, i.e. after it stopped being 1.
+  const moving = scales.filter((v) => v < SHARP && v > SHRUNK)
+  const distinct = new Set(scales.map((v) => v.toFixed(3)))
+  const interpolated = moving.length >= 1
+  if (interpolated) sawTransition = true
   console.log(
-    `  ${moved ? "MOVED " : "still "} "${text.slice(0, 28)}"  y: ${[...tops].join(", ")}` +
-      `  (${group.length} samples)`,
+    `  ${interpolated ? "eased  " : "SNAPPED "} "${text.slice(0, 26)}"  ` +
+      `scales: ${[...distinct].join(" -> ")}`,
   )
 }
-console.log(
-  anyMoved
-    ? "\nRESULT: a line moved while it was dissolving. That is a scroll, not a fade."
-    : "\nRESULT: every outgoing line dissolved without moving.",
-)
-const transforms = new Set(withExit.map((s) => s.exitTransform))
-console.log(`transform: ${[...transforms].join(", ")}`)
-console.log(`animation applied: ${first.exitAnim}`)
+console.log(`\nRESULT: ${sawTransition ? "a transition is running" : "everything SNAPPED — no transition"}`)
+console.log("filters seen on the current line:")
+console.log(`  ${[...new Set(samples.map((s) => s.nowFilter))].join("\n  ")}`)
 
-process.exit(0)
+process.exit(sawTransition ? 0 : 1)

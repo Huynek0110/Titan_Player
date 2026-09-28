@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { activeLineIndex } from "@shared/lyrics"
+import { activeLineIndex, lineFillFraction } from "@shared/lyrics"
 import type { LyricLine } from "@shared/types"
 import { formatDuration } from "../lib/format"
 import { useReducedMotion } from "../lib/useReducedMotion"
@@ -47,21 +47,10 @@ const PAUSED_POLL_MS = 250
 const PAUSED_IDLE_STEPS = 4
 
 /**
- * How long the outgoing line takes to blur away. Must match the `lyric-exit`
- * animation in `LyricsPane.css`.
- *
- * The line is held in state for exactly this long and then dropped, so the value
- * is a second copy of a number the CSS also owns. Unmounting one frame early
- * snaps a visible line out of existence; too late and the fade simply finishes
- * earlier, which is invisible. So it is biased to err on the long side.
- */
-const EXIT_MS = 440
-
-/**
  * How many lines to show after the current one.
  *
- * Two. The second line gives the listener somewhere to start, and it fades to
- * almost nothing, so the eye is pulled to the current line and the rest reads as
+ * Two. The second line gives the listener somewhere to start, and it recedes far
+ * enough that the eye is pulled to the current line and the rest reads as
  * context. A third line stops it being "the line and what is coming", which is
  * the whole idea.
  */
@@ -95,22 +84,6 @@ export default function LyricsPane({
   onEnableOnline,
 }: LyricsPaneProps) {
   const [active, setActive] = useState(-1)
-  /**
-   * The line that was current a moment ago, kept mounted while it leaves.
-   *
-   * React unmounts a node the instant it drops out of the list, and an
-   * unmounted node cannot be transitioned. Without this the outgoing line
-   * vanished instantly while the incoming ones faded in, which read as the text
-   * being replaced rather than as the song moving on. It is positioned
-   * absolutely so it costs no layout, and cleared on a timer.
-   *
-   * Suppressed entirely under `prefers-reduced-motion`, where the whole point of
-   * the preference is that a line should not travel across the screen. The
-   * incoming line still fades, so the change is still legible; only the movement
-   * goes. See `useReducedMotion`.
-   */
-  const [exiting, setExiting] = useState<{ line: LyricLine; from: number } | null>(null)
-  const exitTimer = useRef<number | null>(null)
   const reduced = useReducedMotion()
 
   /**
@@ -187,38 +160,6 @@ export default function LyricsPane({
     }
   }, [lines, synced, isPlaying, getTime, nudgeSeconds])
 
-  /*
-   * Hand the outgoing line to the exit state whenever the active index moves.
-   *
-   * Driven from the previous value rather than from the poll closure, so it fires
-   * for seeks and track changes as well as for ordinary advance. `from` is the
-   * index it left from, which is what lets the CSS know whether it was the
-   * current line or an upcoming one being skipped backwards over.
-   */
-  const lastActive = useRef(active)
-  useEffect(() => {
-    if (active === lastActive.current) return
-    const was = lastActive.current
-    lastActive.current = active
-    if (!synced || reduced) return
-    // Seeking backwards past a line does not get a farewell animation; the pane
-    // is being dragged, not played through, and a line dissolving under a
-    // scrubbing pointer reads as the text failing to keep up.
-    if (was < 0 || active < was) return
-    const leaving = lines[was]
-    if (!leaving) return
-    if (exitTimer.current) window.clearTimeout(exitTimer.current)
-    setExiting({ line: leaving, from: active - was })
-    exitTimer.current = window.setTimeout(() => setExiting(null), EXIT_MS)
-  }, [active, lines, synced, reduced])
-
-  useEffect(
-    () => () => {
-      if (exitTimer.current) window.clearTimeout(exitTimer.current)
-    },
-    [],
-  )
-
   /**
    * Where the display is in the track: before the first line, at a line, or past
    * the last one.
@@ -290,6 +231,109 @@ export default function LyricsPane({
     },
     [visible.length],
   )
+
+  // --- the word sweep ---------------------------------------------------
+
+  const stackRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * Whether any visible line carries word-level timing.
+   *
+   * Enhanced LRC is the only local format that has it, and almost nothing writes
+   * it, so for most tracks this loop never runs at all. That is the honest
+   * outcome: a sweep invented from line timings alone looks like the words are
+   * being shouted rather than sung, and the line-level display is better than a
+   * wrong animation.
+   */
+  const karaoke = visible.some((v) => v.line.words)
+
+  /**
+   * Slice a line into one span per timed word.
+   *
+   * The whitespace *between* words is appended to the preceding span rather than
+   * left between them, because a gap between two inline boxes would be a place
+   * the sweep cannot cross — the gradient would restart and the space would stay
+   * empty while its neighbours filled. Carrying the space inside the span (with
+   * `white-space: pre-wrap` to keep it) makes each word a complete unit.
+   *
+   * The spans are given no fill value of their own. `--p` is written by the loop
+   * below, and until it runs the CSS default of 0% leaves the line uniformly
+   * unfilled, which is a correct frame rather than a flash of white.
+   */
+  const renderWords = useCallback((line: LyricLine) => {
+    const words = line.words
+    if (!words) return line.text
+    const out: React.ReactNode[] = []
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i]
+      const next = words[i + 1]
+      const end = next ? next.start : line.text.length
+      out.push(
+        <span className="w" key={`${w.start}-${i}`}>
+          {line.text.slice(w.start, end)}
+        </span>,
+      )
+    }
+    return out
+  }, [])
+
+  /**
+   * Write the sweep position onto the current line's words, once per frame.
+   *
+   * The gradient's stop is a custom property rather than React state, because a
+   * re-render per frame would be the single most expensive thing in the app and
+   * the whole point is that it must not be. The word spans are collected once per
+   * line change, not per frame, so the loop never queries the DOM — a
+   * `querySelectorAll` at 60Hz is a forced style recalc every frame.
+   *
+   * `lineFillFraction` already knows whether the line has word timing and, if it
+   * is unusable, falls back to interpolating across the line's own span. This
+   * maps that single 0..1 fraction onto per-word percentages using the character
+   * offsets the parser recorded, which is why the sweep advances smoothly through
+   * a word instead of snapping between them.
+   *
+   * The spans are re-collected by keying the effect on `active`, so the loop is
+   * torn down and rebuilt once per lyric — a few times a minute — rather than
+   * sixty times a second.
+   */
+  useEffect(() => {
+    if (!karaoke || reduced) return
+    const line = lines[active]
+    if (!line?.words) return
+
+    const host = stackRef.current?.querySelector<HTMLElement>(".lyric-now.is-now")
+    const els = host ? Array.from(host.querySelectorAll<HTMLElement>(".w")) : []
+    if (els.length === 0) return
+
+    const words = line.words
+    const total = line.text.length || 1
+    const next = lines[active + 1]
+    let raf = 0
+
+    const tick = () => {
+      const f = lineFillFraction(line, next?.time, getTime() + nudgeSeconds)
+      for (let i = 0; i < els.length && i < words.length; i++) {
+        const w = words[i]
+        const s = w.start / total
+        const e = Math.max(w.end, w.start + 1) / total
+        // Below the word's start it is empty, past its end it is finished, and
+        // between the two the sweep crosses it in proportion to its own length.
+        const p = f <= s ? 0 : f >= e ? 100 : ((f - s) / (e - s)) * 100
+        const el = els[i]
+        const nextP = `${p.toFixed(1)}%`
+        if (el.dataset.p !== nextP) {
+          el.style.setProperty("--p", nextP)
+          el.dataset.p = nextP
+        }
+        const done = f >= e
+        if (el.classList.contains("is-done") !== done) el.classList.toggle("is-done", done)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [karaoke, reduced, active, lines, getTime, nudgeSeconds])
 
   // --- timing nudge -----------------------------------------------------
   const stepNudge = useCallback(
@@ -397,37 +441,36 @@ export default function LyricsPane({
   return (
     <div className="lyrics-wrap">
       <div className="lyrics-focus" ref={groupRef} onKeyDown={onLineKeys}>
-        <div className="lyrics-stack">
+        <div className="lyrics-stack" ref={stackRef}>
           {visible.map(({ line, offset }) => (
             <button
-              // Keyed on the timestamp, so React carries the same DOM node from
-              // "second line up" to "current" rather than destroying and rebuilding
-              // it. The state transition is then a CSS transition on a node that
-              // already exists, which is where the motion comes from.
+              /*
+               * Keyed on the timestamp, so React carries the same DOM node from
+               * "second line up" to "current" rather than destroying and rebuilding
+               * it. The state change is then a CSS transition on a node that
+               * already exists, which is where the motion comes from.
+               *
+               * This is also why there is no exit animation any more. There is no
+               * outgoing line to fade: the line that *was* current is still the
+               * same node, now carrying `is-next-1`. The whole transition is the
+               * class changing, which removed a timer, a ref, an effect and a
+               * duplicated DOM node.
+               */
               key={`${line.time}-${line.text}`}
               data-offset={offset}
-              className={`lyric-now is-${offset === 0 ? "now" : `next-${offset}`}`}
+              data-time={line.time}
+              className={`lyric-now is-${offset === 0 ? "now" : `next-${offset}`}${
+                line.words ? " is-karaoke" : ""
+              }`}
               tabIndex={offset === 0 ? 0 : -1}
               aria-current={offset === 0 || undefined}
               onClick={() => seekTo(line)}
               title={`Jump to ${formatDuration(line.time)}`}
             >
-              {line.text || "♪"}
-              {/*
-                The line that was just left, absolutely positioned above this one so
-                it costs no layout and can rise and fade on its own. Nested rather
-                than a sibling because `bottom: 100%` then means "just above the
-                current line" whatever its height turns out to be, which a sibling
-                would have to guess.
-              */}
-              {offset === 0 && exiting && (
-                <span
-                  className="lyric-now is-exit"
-                  key={`exit-${exiting.line.time}-${exiting.from}`}
-                  aria-hidden="true"
-                >
-                  {exiting.line.text}
-                </span>
+              {line.words ? (
+                renderWords(line)
+              ) : (
+                line.text || "♪"
               )}
             </button>
           ))}

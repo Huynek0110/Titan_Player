@@ -438,28 +438,23 @@ export default function NowPlaying({
   const coverUrl = track.hasArtwork ? window.titan.coverUrl(track.id, true) : null
 
   /*
-   * The lyric type scale, derived from the column width rather than fixed.
+   * The lyric type size, derived from the column width rather than fixed.
+   *
+   * Every line is this size — the current one and the two below it — and the
+   * hierarchy comes from scale and blur instead. That only works if the size is
+   * chosen so a line is as unlikely to wrap as possible, because a line that
+   * wraps takes two rows and the block's rhythm changes with the lyric.
    *
    * The column is whatever is left after a 420px cover, the volume rail and the
-   * gap, so it is much narrower in a small window than a wide one. A fixed 40px
-   * current line then wrapped a Vietnamese lyric onto two rows, and two rows for
-   * the current line breaks the rhythm of the whole block — it reads as the line
-   * coming apart rather than as a long lyric.
-   *
-   * So the size is solved from the width. Roughly 40 characters fit on one row at
-   * about 0.55em average advance for this face, which gives the divisor. Clamped
-   * so a very narrow window still produces a readable lyric and a wide one stops
-   * at the size the design actually wants. The two supporting lines are ratios of
-   * it, so the hierarchy survives any width.
+   * gaps, so it is far narrower in a small window than a wide one. Roughly 40
+   * characters fit on one row at about 0.55em average advance for this face,
+   * which is where the divisor comes from. Clamped so a very narrow window still
+   * gives a readable lyric and a wide one stops growing.
    */
-  const lyricSize = Math.round(
-    Math.max(28, Math.min(40, infoWidth / 40 / 0.55)),
-  )
+  const lyricSize = Math.round(Math.max(26, Math.min(38, infoWidth / 40 / 0.55)))
   const gridStyle = {
     "--np-info": `${infoWidth}px`,
     "--lyric-size": `${lyricSize}px`,
-    "--lyric-next": `${Math.round(lyricSize * 0.65)}px`,
-    "--lyric-far": `${Math.round(lyricSize * 0.53)}px`,
   } as CSSProperties
 
   const RepeatGlyph = repeat === "one" ? RepeatOne : Repeat
