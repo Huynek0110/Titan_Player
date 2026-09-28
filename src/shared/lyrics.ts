@@ -1,4 +1,4 @@
-import type { LyricLine, LyricWord, Lyrics } from "./types.js"
+﻿import type { LyricLine, LyricWord, Lyrics } from "./types.js"
 
 /**
  * LRC parsing.
@@ -101,7 +101,7 @@ function extractWords(body: string, text: string, lineTime: number): LyricWord[]
   // The fill walks the words in text order and the bracketing search walks them
   // in time order, so both have to agree. A file whose word tags run backwards
   // has no single correct sweep to draw, and sorting by time would make the fill
-  // run right-to-left through the words — so the timing is dropped instead and
+  // run right-to-left through the words ΓÇö so the timing is dropped instead and
   // the line falls back to the line-span sweep. Every real Enhanced LRC file is
   // already in order, so this costs nothing.
   for (let i = 1; i < starts.length; i++) {
@@ -123,7 +123,7 @@ export function parseLrc(raw: string): ParsedLyrics {
   const lines: LyricLine[] = []
   // Positive offset shifts lyrics earlier, so subtract it as the times are read
   // rather than in a pass at the end. Mutating afterwards meant a line carrying
-  // two timestamps — which shares one `words` array — had that array shifted
+  // two timestamps ΓÇö which shares one `words` array ΓÇö had that array shifted
   // twice.
   const offsetSeconds = readOffset(source) / 1000
   let sawTimestamp = false
@@ -244,17 +244,12 @@ export function preferSynced(a: Lyrics, b: Lyrics): Lyrics {
   if (b.synced && !a.synced) return b
   if (a.synced && b.synced) {
     if (a.lines.length !== b.lines.length) return a.lines.length > b.lines.length ? a : b
-    // Equal line counts cannot tell two sources apart, and per-word timing is
-    // strictly richer than none, so it breaks the tie.
-    const aWords = hasWordTiming(a)
-    if (aWords === hasWordTiming(b)) return a
-    return aWords ? a : b
+    // Equal line counts are a genuine tie, so the first argument wins. Per-word
+    // timing used to break it, and the parser still produces it, but nothing in
+    // the interface reads it any more.
+    return a
   }
   return (a.plain?.length ?? 0) >= (b.plain?.length ?? 0) ? a : b
-}
-
-function hasWordTiming(lyrics: Lyrics): boolean {
-  return lyrics.lines.some((line) => line.words !== undefined)
 }
 
 /**

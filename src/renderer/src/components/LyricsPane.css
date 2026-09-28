@@ -1,213 +1,370 @@
+/*
+ * The lyrics pane: the current line, and what comes next.
+ *
+ * This replaced a scrolling list of every line with a per-word karaoke sweep, so
+ * note what is *not* here any more: no scroll container, no fade mask over a tall
+ * column, no `background-clip: text` gradient, and no custom property being
+ * written from a `requestAnimationFrame` loop. The sweep was the expensive part —
+ * a style write sixty times a second on an element whose background was clipped
+ * to text — and it bought motion nobody wanted.
+ *
+ * What is left is four nodes and a binary search.
+ */
+
 .lyrics-wrap {
   display: flex;
   flex-direction: column;
   min-height: 0;
   flex: 1;
-  /*
-   * Lead-in above and below the lines, so the first and last can be scrolled to
-   * a comfortable position instead of jamming against the pane's edges.
-   *
-   * It was 260px, which is 520px of padding in total. On a pane bounded by the
-   * window that leaves barely any room for actual lyrics, and the scroll range
-   * is mostly empty space — which reads as the lyrics having taken over the
-   * screen. It only ever needs to clear the fade mask at each end, and the
-   * auto-scroll's anchor is what does the centring, not this.
-   */
-  --lyrics-pad: 110px;
 }
 
-.lyrics-scroll {
+/* --- the current line and the next three -------------------------------- */
+
+/*
+ * Right-aligned, and top-aligned at a fixed height.
+ *
+ * Not centred: the artwork column anchors the left of the window, so centred
+ * lyrics float in the middle of the right half with no shared edge with anything.
+ * Hanging them off the right edge instead means every line ends in the same
+ * place, which is what makes the block read as a column and makes the current
+ * line's *end* — the part you are waiting to hear — easy to track.
+ *
+ * `justify-content: flex-start` with a viewport-relative top padding, rather than
+ * `center`, is the load-bearing part. The current line is larger than the two
+ * below it, so the block's height changes on every lyric change; with the block
+ * centred, that would move the current line itself and every jump would be
+ * visible. Top-aligned, the current line stays at exactly the same y whatever
+ * the lines below it measure, and the block simply grows downward.
+ *
+ * The padding is a viewport percentage, which was previously a bug — but that was
+ * for a *scroll* target, which moved when it did. Here it only decides where the
+ * block starts, and there is nothing to scroll, so a resize moves the composition
+ * rather than breaking it.
+ */
+.lyrics-focus {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  /* Fade the top and bottom so lines dissolve in and out of the pane. */
-  mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 84%, transparent 100%);
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 84%, transparent 100%);
-  scrollbar-width: none;
-}
-
-.lyrics-scroll::-webkit-scrollbar {
-  width: 0;
-}
-
-.lyrics-inner {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: flex-end;
+  justify-content: flex-start;
   /*
-   * A fixed lead-in, not a viewport percentage. With `42vh` the scroll height
-   * depended on the window height, so resizing the window changed the content
-   * height and the auto-scroll target in the same frame, and the "38% down"
-   * anchor drifted with it. The right edge carries more padding than the left
-   * because the lines are right-aligned and a long line needs somewhere to end.
+   * A wide gap, roughly a line's height again. The upcoming lines are meant to be
+   * separate from the current one rather than a continuation of it — with a
+   * tight gap the three lines read as one block of text and the eye has to work
+   * out which one is being sung.
    */
-  padding: var(--lyrics-pad) 34px var(--lyrics-pad) 8px;
-}
-
-/* --- a single line ----------------------------------------------------- */
-
-.lyric-line {
-  display: block;
-  width: 100%;
-  padding: 9px 0;
-  /*
-   * Right-aligned, because in the now-playing view the lyrics sit opposite the
-   * artwork and read as a column of its own. A lyric ragged-left against a
-   * centred album cover on one side and the window edge on the other has no
-   * shared edge with either.
-   *
-   * Set here rather than scoped to the view so there is one alignment for the
-   * component, and the view does not have to reach into it.
-   */
+  gap: 30px;
+  padding: 24vh var(--sp-5) 0;
   text-align: right;
-  border-radius: var(--r-md);
   font-family: var(--font-display);
-  /*
-   * The size is deliberately constant. Animating font-size is a layout
-   * property: because the pane is a flex column, every line growing from one
-   * size to another pushed all the lines below it, so the whole pane re-flowed
-   * on every lyric change and the auto-scroll target was itself moving. The
-   * size ramp is carried by an inner scale instead, which is composited.
-   */
-  font-size: 25px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.02em;
 }
 
-/*
- * The scale wrapper, deliberately a block and not the text itself. `transform`
- * does not apply to non-replaced inline boxes, so the obvious place for the size
- * ramp is `.lyric-text` — and that is exactly the element which has to stay
- * `inline` for the fill technique below. Splitting the two roles across a block
- * parent and an inline child satisfies both without either being compromised.
- */
-.lyric-scale {
+.lyric-now {
+  position: relative;
   display: block;
-  transform-origin: left center;
-  transition: transform var(--slow) var(--ease);
-  /* Descender room, as padding on the block rather than on the inline: vertical
-     padding on an inline box inflates the line box and, with it, the height the
-     auto-scroll measures. */
-  padding-bottom: 0.08em;
+  max-width: 26ch;
+  /* No transition on font-size. It is a layout property, and the current line
+     changes size on every lyric change, so transitioning it would reflow the
+     lines below it continuously. The block is top-aligned rather than centred, so
+     the instant size change moves nothing above it — see `.lyrics-focus`. */
+  transition:
+    opacity var(--mid) var(--ease),
+    color var(--mid) var(--ease);
+  cursor: pointer;
+  text-wrap: balance;
 }
 
 /*
- * The gradient carries BOTH the fill and the state colour. `color: transparent`
- * with a hardcoded 34%-white stop made every inactive line render at about
- * 1.3:1 against the background, which is effectively invisible — the pane's
- * whole purpose is reading ahead, so that was a functional defect, not a taste
- * one. Encoding state in the gradient costs nothing and survives the
- * background-clip technique.
+ * The line that was just left, rising and fading.
  *
- * `display: inline` is stated rather than left to the span default, because it is
- * load-bearing and `inline-block` is the change someone would make by accident
- * while tidying this file. A `background-clip: text` gradient is positioned
- * across the union of an inline's fragments, which is what lets a lyric that
- * wraps onto two lines fill as one continuous sweep instead of restarting at
- * each line box. There is no transition on this rule either: it would fight the
- * per-frame `--fill` write, which is the whole mechanism.
+ * Absolutely positioned at `bottom: 100%` of the current line, so it occupies the
+ * space immediately above without adding to the flow. That is what lets a
+ * three-line-tall block animate a fourth line through the same space with no
+ * reflow at all — the outgoing text is the only thing on screen that is moving,
+ * and nothing it moves is being re-laid out.
  */
-.lyric-line .lyric-text {
-  display: inline;
-}
-
-.lyric-line.future .lyric-text {
-  background: linear-gradient(
-    90deg,
-    var(--fg-1) 0%,
-    var(--fg-1) var(--fill, 0%),
-    var(--fg-2) var(--fill, 0%),
-    var(--fg-2) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.lyric-line.past .lyric-text {
-  background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.lyric-line.active .lyric-text {
-  background: linear-gradient(
-    90deg,
-    var(--fg-0) 0%,
-    var(--fg-0) var(--fill, 0%),
-    var(--accent) var(--fill, 0%),
-    var(--accent) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  /* No drop-shadow: it is re-rastered every frame because --fill is written
-     every frame, which is the most expensive rule in the app for no gain. */
-}
-
-.lyric-line.future .lyric-scale {
-  transform: scale(0.9);
-}
-
-.lyric-line.past .lyric-scale {
-  transform: scale(0.86);
-}
-
-.lyric-line:hover:not(.active) .lyric-text {
-  background: linear-gradient(90deg, var(--fg-0) 0%, var(--fg-0) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-.lyric-line:active {
-  transform: scale(0.995);
-}
-
-/* The one line that is in the tab order; the global focus ring is enough. */
-.lyric-line:focus-visible {
-  outline-offset: 4px;
-}
-
-.lyric-translation {
+.lyric-now.is-exit {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
   display: block;
-  margin-top: 6px;
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: 0;
+  max-width: 26ch;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-lg);
   color: var(--fg-2);
+  pointer-events: none;
+  text-align: right;
+  animation: lyric-exit 380ms var(--ease) forwards;
 }
 
-/* --- plain text -------------------------------------------------------- */
+@keyframes lyric-exit {
+  from {
+    opacity: 0.9;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-26px);
+  }
+}
 
+@media (prefers-reduced-motion: reduce) {
+  .lyric-now.is-exit {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* --- the instrumental marker ------------------------------------------- */
+
+/*
+ * Three dots where the lines would be, so the block does not jump when the song
+ * comes back in. The last one is faint rather than absent, which reads as
+ * "waiting for the next line" instead of as an empty box, and they breathe out
+ * of phase so the group never looks frozen.
+ */
+.lyrics-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-height: 56px;
+}
+
+.lyrics-waiting i {
+  width: 13px;
+  height: 13px;
+  border-radius: var(--r-full);
+  background: var(--fg-0);
+  animation: lyric-dot 1.5s var(--ease-in-out) infinite;
+}
+
+.lyrics-waiting i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.lyrics-waiting i:nth-child(3) {
+  animation-delay: 0.36s;
+  opacity: 0.35;
+}
+
+@keyframes lyric-dot {
+  0%,
+  100% {
+    transform: scale(0.82);
+    opacity: 0.45;
+  }
+  45% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lyrics-waiting i {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/*
+ * The current line. White and heavy, and nothing else — no fill, no gradient, no
+ * per-word state. Its job is to be the thing you read, and everything about the
+ * next three lines exists to make this one obvious.
+ */
+.lyric-now.is-now {
+  font-size: var(--fs-d1);
+  font-weight: var(--fw-display);
+  line-height: var(--lh-d1);
+  letter-spacing: var(--track-display);
+  color: var(--fg-0);
+  opacity: 1;
+}
+
+/*
+ * What comes next, fading with distance.
+ *
+ * The steps are wide on purpose. Two shades of "slightly dimmer" is a gradient
+ * with no destination, and the second line ended up as legible as the first, so
+ * the eye had no idea where to land. The last one drops to 34%, which is present
+ * enough to be read on purpose and quiet enough not to compete.
+ */
+.lyric-now.is-next-1 {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-lg);
+  color: var(--fg-2);
+  opacity: 0.66;
+}
+
+.lyric-now.is-next-2 {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-body);
+  line-height: var(--lh-md);
+  color: var(--fg-2);
+  opacity: 0.34;
+}
+
+/*
+ * Hover lifts a line to full contrast rather than dimming the current one, so
+ * aiming at an upcoming line previews it without losing your place.
+ */
+.lyric-now:hover {
+  color: var(--fg-0);
+  opacity: 1;
+}
+
+.lyric-now:focus-visible {
+  outline: 2px solid var(--fg-0);
+  outline-offset: 6px;
+  border-radius: var(--r-sm);
+  opacity: 1;
+  color: var(--fg-0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lyric-now {
+    transition: none;
+  }
+}
+
+/* --- unsynced lyrics --------------------------------------------------- */
+
+/*
+ * With no timestamps there is no "current" line to single out, so the text is
+ * shown as a centred block. Anything that highlighted a line would be guessing.
+ */
 .lyrics-plain-wrap {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--sp-8);
+  mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
 }
 
 .lyrics-plain {
-  padding: 32px 30px 32px 8px;
-  font-size: 19px;
-  line-height: 1.62;
+  max-width: 34ch;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  line-height: var(--lh-xl);
   color: var(--fg-1);
 }
 
 .lyrics-plain p {
-  margin: 0 0 2px;
+  margin: 0 0 var(--sp-5);
 }
+
+/* --- the footer -------------------------------------------------------- */
+
+.lyrics-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  flex-shrink: 0;
+  padding-top: var(--sp-5);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-strong);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+
+.lyrics-foot .on {
+  color: var(--fg-1);
+}
+
+/*
+ * The timing correction.
+ *
+ * Always on screen rather than behind a menu. The user who needs this is looking
+ * at words running ahead of or behind the music, and a timing offset is the only
+ * explanation most of them will have — so it has to be one click away, in the
+ * pane, with its value visible.
+ */
+.lyric-nudge {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.nudge-btn {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  font-size: var(--fs-md);
+  line-height: 1;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.nudge-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--fg-0);
+}
+
+.nudge-value {
+  min-width: 52px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.nudge-value:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--fg-0);
+}
+
+/* A non-zero correction is worth noticing, since the whole point of the control
+   is that something is out by a fraction of a second. */
+.nudge-value.shifted {
+  color: var(--fg-0);
+}
+
+/* --- empty states ------------------------------------------------------ */
 
 .lyrics-empty {
   flex: 1;
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 8px;
+  gap: var(--sp-3);
   padding: 0 40px;
   text-align: center;
   color: var(--fg-3);
+}
+
+.lyrics-empty p {
+  margin: var(--sp-2) 0 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-lg);
+  color: var(--fg-0);
+}
+
+.lyrics-empty > span:not(.lyrics-lookup-dot) {
+  max-width: 40ch;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--fg-2);
 }
 
 /*
@@ -244,9 +401,9 @@
 }
 
 /*
- * Retry, for a lookup that matched the wrong recording. Only offered on a
- * confirmed miss, never on a network failure: retrying a timeout teaches the
- * user that the button is unreliable.
+ * The two buttons here are different offers, so they read differently: turning
+ * the feature on is the thing the user came for, and "try again" is a
+ * consolation after it did not work.
  */
 .lyrics-retry {
   margin-top: var(--sp-3);
@@ -264,95 +421,12 @@
   background: rgba(255, 255, 255, 0.2);
 }
 
-.lyrics-empty p {
-  margin: 4px 0 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg-2);
-}
-
-.lyrics-empty span {
-  font-size: 12.5px;
-  max-width: 320px;
-  line-height: 1.55;
-}
-
-/* --- footer ------------------------------------------------------------ */
-
-.lyrics-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 20px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+/* The privacy note under the toggle, in a size that is deliberately not part of
+   the type scale: it is a footnote, and the pane's own message above it is the
+   thing being read. */
+.lyrics-privacy {
+  max-width: 44ch;
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-2xs);
   color: var(--fg-3);
 }
-
-.lyrics-foot .on {
-  color: var(--accent);
-}
-
-.lyrics-foot .pill {
-  padding: 4px 10px;
-  font-size: 10.5px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-/* --- timing nudge ------------------------------------------------------ */
-
-.lyric-nudge {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  /* Pushed to the far end so it reads as an instrument panel rather than as a
-     fourth item in the status line. */
-  margin-left: auto;
-  color: var(--fg-3);
-}
-
-.lyric-nudge-label {
-  margin-right: 7px;
-  font-size: 10.5px;
-  letter-spacing: 0.07em;
-}
-
-.lyric-nudge button {
-  display: grid;
-  place-items: center;
-  height: 22px;
-  min-width: 22px;
-  padding: 0 4px;
-  border-radius: var(--r-sm);
-  color: var(--fg-2);
-  font-size: 13px;
-  line-height: 1;
-  transition:
-    color var(--fast) var(--ease),
-    background var(--fast) var(--ease);
-}
-
-.lyric-nudge button:hover {
-  color: var(--fg-0);
-  background: rgba(255, 255, 255, 0.09);
-}
-
-/* The readout is the reset control, and it is the only part worth looking at:
-   a nudge of zero is unremarkable, a nudge of -0.6s is a diagnosis. */
-.lyric-nudge .nudge-value {
-  min-width: 60px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-3);
-}
-
-.lyric-nudge .nudge-value.shifted {
-  color: var(--fg-1);
-}
-

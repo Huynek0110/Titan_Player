@@ -135,30 +135,27 @@ if (seekTo > 0) {
   await new Promise((r) => setTimeout(r, 2500))
 
   const active = await evaluate(`(() => {
-    const el = document.querySelector('.lyric-line.active')
-    if (!el) return { found: false }
-    const scroll = document.querySelector('.lyrics-scroll')
-    const inner = el.querySelector('.lyric-scale')
+    const el = document.querySelector('.lyric-now.is-now')
+    if (!el) return { found: false, waiting: Boolean(document.querySelector('.lyrics-waiting')) }
+    const focus = document.querySelector('.lyrics-focus')
+    const r = el.getBoundingClientRect()
     return {
       found: true,
+      waiting: Boolean(document.querySelector('.lyrics-waiting')),
       text: el.innerText.trim().slice(0, 60),
-      className: el.className,
-      // \`--fill\` is written on the line element itself, not on the inner span,
-      // so reading it proves the rAF loop ran rather than inferring it from a
-      // screenshot. The scale comes from a class, so it needs the computed value.
-      fill: el.style.getPropertyValue('--fill') || null,
-      scale: inner ? getComputedStyle(inner).transform : null,
-      // How many lines are inside the pane's visible box, which is what tells
-      // us the fade mask and the scroller are actually bounded.
-      linesInView: (() => {
-        if (!scroll) return null
-        const box = scroll.getBoundingClientRect()
-        return [...document.querySelectorAll('.lyric-line')].filter((n) => {
-          const r = n.getBoundingClientRect()
-          return r.bottom > box.top && r.top < box.bottom
-        }).length
-      })(),
-      scrollTop: scroll ? Math.round(scroll.scrollTop) : null,
+      exitPresent: Boolean(el.querySelector('.is-exit')),
+      // The size ramp is a real font-size, not a transform, so the current line
+      // must measure wider than the one below it. Comparing the two proves the
+      // hierarchy is actually applied rather than just declared.
+      sizes: [...document.querySelectorAll('.lyric-now')].map(
+        (n) => Math.round(parseFloat(getComputedStyle(n).fontSize)),
+      ),
+      align: focus ? getComputedStyle(focus).textAlign : null,
+      // Whether the current line sits inside the window at all. This is what
+      // caught the pane overflowing and pushing the left column off screen.
+      top: Math.round(r.top),
+      bottom: Math.round(r.bottom),
+      inViewport: r.top >= 0 && r.bottom <= innerHeight,
       audioTime: Number((document.querySelector('audio')?.currentTime ?? 0).toFixed(2)),
       paused: document.querySelector('audio')?.paused,
       volume: document.querySelector('audio')?.volume,

@@ -1,22 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { activeLineIndex } from "@shared/lyrics"
 import type { LyricLine } from "@shared/types"
-import { activeLineIndex, lineFillFraction } from "@shared/lyrics"
+import { formatDuration } from "../lib/format"
 import { Lyrics } from "./Icons"
 import "./LyricsPane.css"
 
 interface LyricsPaneProps {
   lines: LyricLine[]
   plain?: string
-  /**
-   * Reads the live playhead. A function, not a value, on purpose: the fill runs
-   * in a rAF loop and must sample the audio clock every frame. Reading a prop
-   * fed by `timeupdate` would only fire about four times a second, turning the
-   * sweep into a visible staircase.
-   *
-   * It is called from that loop and from nowhere else. Calling it during render
-   * would make render depend on a clock that moves on its own, so the same props
-   * would paint different output depending on when React got round to them.
-   */
+  /** The audio clock, read through a callback so it can stay stable. */
   getTime: () => number
   isPlaying: boolean
   onSeek: (seconds: number) => void
@@ -45,42 +37,40 @@ interface LyricsPaneProps {
   onEnableOnline?: () => void
 }
 
-const AUTO_RESUME_MS = 2600
-/** Seconds of stillness after which auto-scroll takes over again. */
-const IDLE_BEFORE_RESUME = 4000
-
-/**
- * Clock polling while nothing is playing.
- *
- * With the audio stopped the playhead cannot move, so the 60Hz loop is torn down
- * rather than left idling. It cannot be torn down *forever*, though: a seek can
- * arrive from outside this pane — the player bar's scrubber — and nothing
- * announces it, so the only way to follow one is to keep looking. The poll
- * therefore starts here and backs off on every frame that changes nothing, so a
- * paused pane with a synced track settles at about 1Hz rather than running two
- * 60Hz loops forever, and a pane that has just been seeked snaps straight back
- * to full rate.
- */
-const PAUSED_POLL_MS = 200
-/** Ceiling on the backoff: three doublings of the poll, so a paused pane with a
- *  synced track settles at about 1Hz and no further. */
-const PAUSED_IDLE_STEPS = 3
-
-/** One press of the timing nudge. LRC offsets are quoted in milliseconds and
- *  real-world drift is tens of milliseconds, so 200ms is a visible correction
- *  without overshooting past the words being corrected. */
 const NUDGE_STEP_MS = 200
 const NUDGE_LIMIT_MS = 5000
 
+/** How often to re-read the clock while paused, in milliseconds. */
+const PAUSED_POLL_MS = 250
+/** Backing-off multiplier once repeated polls find nothing new. */
+const PAUSED_IDLE_STEPS = 4
+
+/** How long the outgoing line takes to rise and fade. Must match the CSS. */
+const EXIT_MS = 380
+
 /**
- * A karaoke lyrics view.
+ * How many lines to show after the current one.
  *
- * The fill is one CSS custom property written from an animation frame, consumed
- * by a `background-clip: text` gradient on an `inline` element. Because the
- * element is inline, the gradient wraps across line boxes, so a multi-line lyric
- * gets one continuous sweep with no per-word DOM and no reflow. React state and
- * CSS transitions are both deliberately avoided on that path: state would
- * re-render sixty times a second, and a transition would lag the audio clock.
+ * Two. The second line gives the listener somewhere to start, and it fades to
+ * almost nothing, so the eye is pulled to the current line and the rest reads as
+ * context. A third line stops it being "the line and what is coming", which is
+ * the whole idea.
+ */
+const UPCOMING = 2
+
+/** How far past the final lyric the dots take over, in seconds. */
+const TAIL_SECONDS = 2.5
+
+/**
+ * The lyrics pane: the current line, what comes next, and a marker for the parts
+ * of a track nobody sings over.
+ *
+ * This replaced a scrolling list of every line with a per-word karaoke sweep, and
+ * the change removed complexity rather than adding it — no scroll container, no
+ * per-line DOM for a fifty-line file, and no custom property being written from a
+ * `requestAnimationFrame` loop. What is left is a binary search over the
+ * timestamps and four nodes. The sweep was the expensive part and nobody wanted
+ * it.
  */
 export default function LyricsPane({
   lines,
@@ -95,12 +85,18 @@ export default function LyricsPane({
   onlineEnabled,
   onEnableOnline,
 }: LyricsPaneProps) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const lineRefs = useRef<Map<number, HTMLButtonElement>>(new Map())
   const [active, setActive] = useState(-1)
-  const [autoScroll, setAutoScroll] = useState(true)
-  const idleTimer = useRef<number | null>(null)
-  const pausedUntil = useRef(0)
+  /**
+   * The line that was current a moment ago, kept mounted while it leaves.
+   *
+   * React unmounts a node the instant it drops out of the list, and an
+   * unmounted node cannot be transitioned. Without this the outgoing line
+   * vanished instantly while the incoming ones faded in, which read as the text
+   * being replaced rather than as the song moving on. It is positioned
+   * absolutely so it costs no layout, and cleared on a timer.
+   */
+  const [exiting, setExiting] = useState<{ line: LyricLine; from: number } | null>(null)
+  const exitTimer = useRef<number | null>(null)
 
   /**
    * The user's timing nudge, stored against the array it was set for.
@@ -119,128 +115,122 @@ export default function LyricsPane({
 
   const synced = lines.length > 0
 
-  // --- active line and the sweep -----------------------------------------
-  // One loop, not two. Polling the active index and writing the fill from
-  // separate loops meant they could disagree by a frame at a line change, and
-  // doubled the per-frame work for no benefit.
-  //
-  // The loop is keyed to `isPlaying`, not merely to `synced` and `active >= 0`.
-  // Gating only on those left two 60Hz loops running indefinitely behind a paused
-  // synced track, one of them writing the same `--fill` value sixty times a
-  // second.
+  // --- the active line ---------------------------------------------------
+  /*
+   * A binary search and a `setState` when the answer changes. Nothing else.
+   *
+   * The rate is a `requestAnimationFrame` while playing and a backing-off poll
+   * while paused, because a paused media element cannot move the clock by itself
+   * but a seek can still arrive from the player bar or a click in here, and
+   * nothing announces one. Once several polls in a row find the same line, the
+   * interval doubles up to a cap: a paused track should not cost a wake-up every
+   * quarter second for as long as the window is open.
+   */
   useEffect(() => {
     if (!synced) return
     const list = lines
     let raf = 0
     let timer = 0
     let index = -2
-    let written = -1
     let idle = 0
 
-    /** True when this frame actually moved the display, which is what resets the
-     *  paused poll back to full rate. */
-    const frame = () => {
-      // The nudge shifts everything, so it belongs where the clock is read
-      // rather than inside the parser: the file's own `[offset:]` tag has already
-      // been applied at scan time, and this is a second, user-driven correction
-      // on top of it. Positive means the lyrics should appear earlier, matching
-      // LRC's sign convention.
+    const poll = () => {
+      // The nudge shifts everything, so it belongs where the clock is read rather
+      // than inside the parser: the file's own `[offset:]` tag has already been
+      // applied at scan time, and this is a second, user-driven correction on top
+      // of it. Positive means the lyrics should appear earlier, matching LRC's sign
+      // convention.
       const time = getTime() + nudgeSeconds
       const next = activeLineIndex(list, time)
-      if (next !== index) {
-        index = next
-        // Reset the guard: the newly active element may be a recycled node
-        // carrying a previous line's percentage.
-        written = -1
-        setActive(next)
-        return true
-      }
-      if (next < 0) return false
-      const element = lineRefs.current.get(next)
-      if (!element) return false
-      const percent = lineFillFraction(list[next], list[next + 1]?.time, time) * 100
-      // Writing an unchanged value still costs a style recalculation on an
-      // element whose background is clipped to text, so it is skipped.
-      if (Math.abs(percent - written) < 0.05) return false
-      written = percent
-      element.style.setProperty("--fill", `${percent.toFixed(2)}%`)
+      if (next === index) return false
+      index = next
+      setActive(next)
       return true
     }
 
     // One immediate pass, so a seek made while paused shows straight away rather
     // than after the first poll.
-    frame()
+    poll()
 
     if (isPlaying) {
       const tick = () => {
-        frame()
+        poll()
         raf = requestAnimationFrame(tick)
       }
       raf = requestAnimationFrame(tick)
     } else {
       const tick = () => {
-        idle = frame() ? 0 : Math.min(idle + 1, PAUSED_IDLE_STEPS)
+        idle = poll() ? 0 : Math.min(idle + 1, PAUSED_IDLE_STEPS)
         timer = window.setTimeout(tick, PAUSED_POLL_MS * 2 ** idle)
       }
       timer = window.setTimeout(tick, PAUSED_POLL_MS)
     }
+
     return () => {
       cancelAnimationFrame(raf)
       window.clearTimeout(timer)
     }
   }, [lines, synced, isPlaying, getTime, nudgeSeconds])
 
-  // A line that stops being active keeps whatever fill it had reached, so clear
-  // it. Without this, seeking backwards leaves every skipped line rendered at
-  // full brightness instead of the dimmed upcoming state. `lines` is in the
-  // dependency list because a new set of lines reuses the same DOM nodes when
-  // the timestamps happen to line up.
+  /*
+   * Hand the outgoing line to the exit state whenever the active index moves.
+   *
+   * Driven from the previous value rather than from the poll closure, so it fires
+   * for seeks and track changes as well as for ordinary advance. `from` is the
+   * index it left from, which is what lets the CSS know whether it was the
+   * current line or an upcoming one being skipped backwards over.
+   */
+  const lastActive = useRef(active)
   useEffect(() => {
-    for (const [index, element] of lineRefs.current) {
-      if (index !== active) element.style.removeProperty("--fill")
-    }
-  }, [active, lines])
+    if (active === lastActive.current) return
+    const was = lastActive.current
+    lastActive.current = active
+    if (!synced) return
+    // Seeking backwards past a line does not get a farewell animation; the pane
+    // is being dragged, not played through, and a line dissolving under a
+    // scrubbing pointer reads as the text failing to keep up.
+    if (was < 0 || active < was) return
+    const leaving = lines[was]
+    if (!leaving) return
+    if (exitTimer.current) window.clearTimeout(exitTimer.current)
+    setExiting({ line: leaving, from: active - was })
+    exitTimer.current = window.setTimeout(() => setExiting(null), EXIT_MS)
+  }, [active, lines, synced])
 
-  // --- auto-scroll ------------------------------------------------------
-  const scrollToActive = useCallback((index: number) => {
-    const container = scrollRef.current
-    const element = lineRefs.current.get(index)
-    if (!container || !element) return
-    // `offsetTop` is measured against the nearest *positioned* ancestor, which
-    // is the full-screen overlay rather than this scroll container. Subtracting
-    // the container's own offset is what makes the line actually land 38% down.
-    const target =
-      element.offsetTop -
-      container.offsetTop -
-      container.clientHeight * 0.38 +
-      container.scrollTop
-    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" })
-  }, [])
+  useEffect(
+    () => () => {
+      if (exitTimer.current) window.clearTimeout(exitTimer.current)
+    },
+    [],
+  )
 
-  useEffect(() => {
-    if (!autoScroll || active < 0) return
-    if (Date.now() < pausedUntil.current) return
-    scrollToActive(active)
-  }, [active, autoScroll, scrollToActive])
+  /**
+   * Where the display is in the track: before the first line, at a line, or past
+   * the last one.
+   *
+   * The two ends are the same thing to a listener — the song is running and
+   * nobody is singing — so both get the same marker. Treating them differently
+   * was how a track that opens with an instrumental used to show its first line
+   * immediately and highlight it while the music had not reached it yet.
+   */
+  const phase = useMemo(() => {
+    if (!synced) return "none"
+    if (active < 0) return "waiting"
+    const last = lines[lines.length - 1]
+    const next = lines[active + 1]
+    if (!next && getTime() + nudgeSeconds > last.time + TAIL_SECONDS) return "waiting"
+    return "singing"
+  }, [synced, active, lines, getTime, nudgeSeconds])
 
-  // Any manual interaction suspends auto-scroll, then it resumes on its own.
-  const suspendAutoScroll = useCallback(() => {
-    setAutoScroll(false)
-    pausedUntil.current = Date.now() + AUTO_RESUME_MS
-    if (idleTimer.current) window.clearTimeout(idleTimer.current)
-    idleTimer.current = window.setTimeout(() => setAutoScroll(true), IDLE_BEFORE_RESUME)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (idleTimer.current) window.clearTimeout(idleTimer.current)
-    }
-  }, [])
-
-  const setLineRef = useCallback((index: number, node: HTMLButtonElement | null) => {
-    if (node) lineRefs.current.set(index, node)
-    else lineRefs.current.delete(index)
-  }, [])
+  /**
+   * The lines to draw: the current one, then what comes next.
+   *
+   * Nothing at all during an instrumental, which is what the phase above decides.
+   */
+  const visible = useMemo(() => {
+    if (phase !== "singing") return []
+    return lines.slice(active, active + 1 + UPCOMING).map((line, offset) => ({ line, offset }))
+  }, [lines, active, phase])
 
   const plainLines = useMemo(
     () => (plain ? plain.split(/\r?\n/).map((t) => t.trim()).filter(Boolean) : []),
@@ -248,6 +238,8 @@ export default function LyricsPane({
   )
 
   // --- interaction ------------------------------------------------------
+  const groupRef = useRef<HTMLDivElement>(null)
+
   const seekTo = useCallback(
     (line: LyricLine) => {
       // Undo the nudge on the way in: the stored time is where the *file* says
@@ -260,35 +252,28 @@ export default function LyricsPane({
   )
 
   /**
-   * Roving tab index over the lines.
+   * Arrow keys step through the lines that are on screen.
    *
-   * Forty focusable lines would be forty tab stops before the pane's own controls,
-   * and it would bury the line actually being sung under thirty-nine others. Only
-   * the active line is in the tab order, so tabbing into the pane lands on it —
-   * which is the only way "the active line" is discoverable to a keyboard user at
-   * all — and the arrow keys move between lines without seeking, since focus is
-   * not playback.
+   * Only three nodes exist, so this is a roving focus over a handful of buttons
+   * rather than the forty tab stops a full list would have produced. The current
+   * line takes the tab stop, which is what makes "the line being sung" reachable
+   * at all.
    */
   const onLineKeys = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const key = event.key
-      if (key !== "ArrowDown" && key !== "ArrowUp" && key !== "Home" && key !== "End") return
-      const from = (event.target as HTMLElement).closest<HTMLElement>(".lyric-line")
+      if (key !== "ArrowDown" && key !== "ArrowUp") return
+      const from = (event.target as HTMLElement).closest<HTMLElement>(".lyric-now")
       if (!from) return
-      const index = Number(from.dataset.index)
-      if (!Number.isFinite(index)) return
-      const last = lines.length - 1
-      let to = index
-      if (key === "ArrowDown") to = index + 1
-      else if (key === "ArrowUp") to = index - 1
-      else if (key === "Home") to = 0
-      else to = last
-      if (to === index || to < 0 || to > last) return
+      const here = Number(from.dataset.offset)
+      if (!Number.isFinite(here)) return
+      const to = key === "ArrowDown" ? here + 1 : here - 1
+      if (to < 0 || to > visible.length - 1) return
       event.preventDefault()
-      suspendAutoScroll()
-      lineRefs.current.get(to)?.focus()
+      const target = groupRef.current?.querySelector<HTMLButtonElement>(`[data-offset="${to}"]`)
+      target?.focus()
     },
-    [lines.length, suspendAutoScroll],
+    [visible.length],
   )
 
   // --- timing nudge -----------------------------------------------------
@@ -367,8 +352,8 @@ export default function LyricsPane({
               Look up lyrics online
             </button>
             <span className="lyrics-privacy">
-              Sends this track&apos;s artist, title and album to lrclib.net. Turn it off
-              any time in Settings.
+              Sends this track&apos;s artist, title and album to lrclib.net. Turn it off any
+              time in Settings.
             </span>
           </>
         )}
@@ -377,8 +362,13 @@ export default function LyricsPane({
   }
 
   if (!synced) {
+    /*
+     * Unsynced lyrics have no "current" line to show, so there is nothing to
+     * single out. A centred block of the text is the honest presentation: it is
+     * readable, and it does not pretend to be following the song.
+     */
     return (
-      <div className="lyrics-plain-wrap" ref={scrollRef}>
+      <div className="lyrics-plain-wrap">
         <div className="lyrics-plain selectable">
           {plainLines.map((line, i) => (
             <p key={i}>{line}</p>
@@ -388,61 +378,61 @@ export default function LyricsPane({
     )
   }
 
-  // --- synced view ------------------------------------------------------
-  // Before the first line is reached there is no active line to hang the tab stop
-  // on, so the first line takes it.
-  const tabbable = active >= 0 ? active : 0
-
+  // --- the synced view ---------------------------------------------------
   return (
     <div className="lyrics-wrap">
-      <div
-        className="lyrics-scroll"
-        ref={scrollRef}
-        onWheel={suspendAutoScroll}
-        onPointerDown={suspendAutoScroll}
-        onTouchMove={suspendAutoScroll}
-        onKeyDown={onLineKeys}
-      >
-        <div className="lyrics-inner">
-          {lines.map((line, index) => {
-            const state =
-              index === active ? "active" : index < active ? "past" : "future"
+      <div className="lyrics-focus" ref={groupRef} onKeyDown={onLineKeys}>
+        {/*
+          The instrumental marker. Three dots rather than a spinner, and the last
+          one faint rather than absent, so the state reads as "waiting for the
+          next line" and not as an empty box. It sits in the same place the lines
+          do, so the layout does not jump when the song comes back in.
+        */}
+        {phase === "waiting" && (
+          <div className="lyrics-waiting" role="status" aria-label="No lyrics here right now">
+            <i />
+            <i />
+            <i />
+          </div>
+        )}
 
-            return (
-              <button
-                key={`${line.time}-${index}`}
-                data-index={index}
-                ref={(node) => setLineRef(index, node)}
-                className={`lyric-line ${state}`}
-                tabIndex={index === tabbable ? 0 : -1}
-                aria-current={index === active || undefined}
-                onClick={() => seekTo(line)}
-                title={`Jump to ${formatStamp(line.time)}`}
+        {visible.map(({ line, offset }) => (
+          <button
+            // Keyed on the timestamp, so React carries the same DOM node from
+            // "second line up" to "current" rather than destroying and rebuilding
+            // it. The state transition is then a CSS transition on a node that
+            // already exists, which is where the motion comes from.
+            key={`${line.time}-${line.text}`}
+            data-offset={offset}
+            className={`lyric-now is-${offset === 0 ? "now" : `next-${offset}`}`}
+            tabIndex={offset === 0 ? 0 : -1}
+            aria-current={offset === 0 || undefined}
+            onClick={() => seekTo(line)}
+            title={`Jump to ${formatDuration(line.time)}`}
+          >
+            {line.text || "♪"}
+            {/*
+              The line that was just left, absolutely positioned above this one so
+              it costs no layout and can rise and fade on its own. Nested rather
+              than a sibling because `bottom: 100%` then means "just above the
+              current line" whatever its height turns out to be, which a sibling
+              would have to guess.
+            */}
+            {offset === 0 && exiting && (
+              <span
+                className="lyric-now is-exit"
+                key={`exit-${exiting.line.time}-${exiting.from}`}
+                aria-hidden="true"
               >
-                {/*
-                 * The size ramp lives on this wrapper and not on `.lyric-text`.
-                 * `transform` does not apply to non-replaced inline boxes, and
-                 * the text has to stay `inline` so the fill gradient is
-                 * positioned across the union of its fragments — that is what
-                 * makes a wrapped lyric one continuous sweep. A block parent
-                 * takes the transform, so neither constraint has to give.
-                 */}
-                <span className="lyric-scale">
-                  <span className="lyric-text">{line.text || "♪"}</span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
+                {exiting.line.text}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       <div className="lyrics-foot">
-        <span className={autoScroll ? "on" : ""}>{isPlaying ? "Following" : "Paused"}</span>
-        {!autoScroll && (
-          <button className="pill" onClick={() => setAutoScroll(true)}>
-            Resume follow
-          </button>
-        )}
+        <span className={isPlaying ? "on" : ""}>{isPlaying ? "Following" : "Paused"}</span>
 
         {/*
           Always on screen rather than behind a menu. The user who needs this is
@@ -480,10 +470,4 @@ export default function LyricsPane({
       </div>
     </div>
   )
-}
-
-function formatStamp(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return `${m}:${String(s).padStart(2, "0")}`
 }
