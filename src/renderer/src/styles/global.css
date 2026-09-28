@@ -403,7 +403,7 @@
    *   transform, opacity — the compositor owns these. They never touch
    *   layout or paint, so they cannot stutter, and they are the only
    *   two properties that are safe to drive from a requestAnimationFrame
-   *   loop (the seek bar's scaleX and the lyrics pane's --fill).
+   *   loop (the seek bar's scaleX).
    *   color, background-color, border-color, outline-color — paint, but
    *   only the element's own box, at --fast, on something small. This
    *   is the bulk of the app's motion and it is fine.
@@ -428,14 +428,17 @@
    *   animating it is fine; that is what `.playerbar` and `.glass` do.
    *
    *   A one-shot filter transition on a small element is the exception
-   *   worth naming: `.artwork img` cross-fades `blur(7px) → none` once
-   *   per resolved image, on a thumbnail. That is allowed. The same
-   *   effect on a full-width row is not.
+   *   worth naming, and there are two. `.artwork img` cross-fades
+   *   `blur(7px) → none` once per resolved image, on a thumbnail. The
+   *   three lyric lines carry a `blur()` depth ramp that transitions
+   *   once every few seconds on 19-35px text, which is caption-sized
+   *   and not in a loop. Both are allowed. The same effect on a
+   *   full-width row is not.
    *
    * DURATIONS
    *   --fast  120ms  hover, colour, a button's own scale
    *   --mid   220ms  a state change: selection, expansion, the queue
-   *   --slow  420ms  a hero: the cover transition, the lyric fill sweep
+   *   --slow  420ms  a hero: the cover transition, the lyric line change
    *
    * EASING
    *   --ease for everything, including all entrances and exits. One
