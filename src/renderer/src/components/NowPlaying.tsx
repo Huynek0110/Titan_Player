@@ -72,15 +72,21 @@ interface NowPlayingProps {
 
 /** Width of the art column, fixed so the resize maths has one known term. */
 const ART_W = 420
-/** Widest and narrowest the lyrics column is allowed to be. */
-const INFO_MIN = 340
-const INFO_MAX = 1000
+/**
+ * Widest and narrowest the lyrics column is allowed to be.
+ *
+ * The floor is what a single unreadable line needs; the ceiling is generous
+ * because the column sits against the right edge of the window and anything wider
+ * would start pushing the two halves together.
+ */
+const INFO_MIN = 360
+const INFO_MAX = 1100
 /**
  * The default. Sized for the lyric font rather than for the artwork: a 40px line
  * wraps after about six words in a 620px column, which turned one readable
- * sentence into a two-line block and left the right of the window empty.
+ * sentence into a two-line block.
  */
-const INFO_DEFAULT = 720
+const INFO_DEFAULT = 780
 /** How far one arrow press on the splitter moves the column. */
 const SPLIT_STEP = 24
 
@@ -247,7 +253,16 @@ export default function NowPlaying({
         parseFloat(style.paddingLeft) -
         parseFloat(style.paddingRight)
       const gap = parseFloat(style.columnGap) || 0
-      setAvail(Math.max(0, inner - ART_W - gap * 2))
+      /*
+       * The middle track is flexible (`minmax(48px, 1fr)`), so what is available
+       * for the lyrics is what is left after the artwork, the gaps and that
+       * track's minimum. Reading the track's real width rather than assuming the
+       * old fixed-48px value keeps `aria-valuemax` honest if the minimum is ever
+       * changed in the stylesheet.
+       */
+      const tracks = style.gridTemplateColumns.split(" ").map(parseFloat)
+      const middle = tracks[1] || 48
+      setAvail(Math.max(0, inner - ART_W - middle - gap * 2))
     }
     measure()
     window.addEventListener("resize", measure)

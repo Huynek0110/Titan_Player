@@ -283,34 +283,34 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--np-art, 420px) 0px var(--np-info, 620px);
+  grid-template-columns: var(--np-art, 420px) minmax(48px, 1fr) var(--np-info, 780px);
   /*
-   * The row is bounded by the container, not by its content.
+   * The middle track is the flexible one, and that is the whole composition.
    *
-   * This is the bug that emptied the left column. With an auto-sized row, a long
-   * lyric file made the row taller than the window, and `align-content: center`
-   * then centred that oversized row — pushing its top above the viewport. The
-   * left column, vertically centred inside a row that now begins off-screen, went
-   * with it, and the lyrics started above the top edge. `minmax(0, 1fr)` caps the
-   * row at the container so the overflow lands inside the lyrics pane, which is
-   * the only thing here meant to scroll.
+   * The cover sits hard against the left and the lyrics hard against the right,
+   * with the slack between them. The obvious layout — a fixed artwork track, a
+   * fixed lyrics track, and the leftover space left over on the right — strands
+   * the lyrics directly beside the cover with 350px of dead space down the far
+   * edge. The reference has a deliberate gap between the two halves and the lyrics
+   * running to the window edge, so the grid has to say that.
+   *
+   * `minmax(48px, 1fr)` rather than a zero-width splitter track, so the gap
+   * survives a narrow window instead of collapsing. Dragging the splitter still
+   * works: it changes `--np-info`, which widens the lyrics and takes the slack
+   * out of the middle track.
+   *
+   * The row is bounded by the container, not by its content, because an
+   * auto-sized row plus `align-content: center` pushed the whole row above the
+   * viewport on a long lyric file and took the left column with it.
    */
   grid-template-rows: minmax(0, 1fr);
-  column-gap: var(--sp-10);
+  column-gap: var(--sp-9);
   /* Per-item, not per-row: each column centres itself inside the bounded row. */
   align-items: center;
   overflow: hidden;
   /* The volume rail lives on the window's left edge, so the content column has
      to clear it or the artwork overlaps the slider. */
   padding: var(--sp-4) var(--gutter) var(--sp-9) 88px;
-  /*
-   * Wide, and fluid up to this point. A 40px lyric needs roughly 450px of its
-   * own column before it starts wrapping after six words, and a narrower
-   * container put a 24px-wide margin of dead space down the right of the window
-   * while wrapping the one thing the user came to read.
-   */
-  max-width: 1560px;
-  margin: 0 auto;
   width: 100%;
 }
 
@@ -357,10 +357,15 @@
 .nowplaying-title {
   margin: 0;
   font-family: var(--font-display);
-  /* The one place `--fs-d3` is used. */
-  font-size: var(--fs-d3);
+  /*
+   * 30px, not the type scale's 43px display step. The title is a caption for the
+   * cover, not a hero: at 43px it was nearly twice the reference's size relative to
+   * the artwork, and a long title wrapped to two lines under a square that stays
+   * one. The lyric is the hero on this screen and it is 40px.
+   */
+  font-size: 30px;
   font-weight: var(--fw-display);
-  line-height: var(--lh-d3);
+  line-height: 1.2;
   letter-spacing: var(--track-display);
   color: var(--fg-0);
   text-wrap: balance;
@@ -368,9 +373,9 @@
 
 .nowplaying-artist {
   margin: var(--sp-3) 0 0;
-  font-size: var(--fs-xl);
+  font-size: var(--fs-lg);
   font-weight: var(--fw-body);
-  line-height: var(--lh-xl);
+  line-height: var(--lh-lg);
   color: var(--fg-1);
 }
 
@@ -611,7 +616,9 @@
 
 .nowplaying-split {
   position: relative;
-  width: 0;
+  /* In a flexible track, so the handle lands in the middle of the gap between
+     the two halves rather than at a fixed offset from the artwork. */
+  width: 100%;
   align-self: stretch;
   margin-block: var(--sp-4);
   cursor: col-resize;
