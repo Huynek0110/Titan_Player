@@ -25,10 +25,16 @@
  * the current line never moves — which looks exactly like a broken animation when
  * the feature is fine.
  *
- * Usage: node scripts\probe-lyric-animation.mjs <cdpPort> [sampleMs]
+ * Usage: node scripts\probe-lyric-animation.mjs <cdpPort> [sampleMs] [reduce]
+ *
+ * `reduce` leaves the media emulation off, so the app's own
+ * `prefers-reduced-motion` branch is what runs. That branch is checked for two
+ * different things and the first version of this file checked neither: the scale
+ * hierarchy must *survive* it, and the transition must *not*.
  */
 const port = process.argv[2] ?? "9222"
 const sampleMs = Number(process.argv[3] ?? 60)
+const asReduced = process.argv[4] === "reduce"
 
 const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
 const page = list.find((t) => t.type === "page")
@@ -73,17 +79,19 @@ const evaluate = async (expression) => {
 await send("Runtime.enable")
 
 /*
- * This machine reports `prefers-reduced-motion: reduce`, because Windows has
- * animation effects switched off. That is a real preference and the app honours
- * it, which means the moving part of the line change is correctly suppressed and
- * cannot be observed here as-is.
+ * Emulate the preference explicitly in BOTH directions.
  *
- * So the probe forces the other branch through Chromium's own media emulation.
- * That verifies the animation *works* for users who have motion enabled, and the
- * reduced-motion path is verified separately by reading what the component renders.
+ * The first version only *set* it for the animation run and *left it alone* for
+ * the reduced run, on the assumption that dropping the override would restore the
+ * host's real setting. It does not: `Emulation.setEmulatedMedia` is sticky on the
+ * target, so the reduced run inherited `no-preference` from the previous run and
+ * cheerfully reported the animated behaviour as the reduced one. Anything that
+ * can be pinned must be pinned in both states, or the comparison is meaningless.
  */
 await send("Emulation.setEmulatedMedia", {
-  features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+  features: [
+    { name: "prefers-reduced-motion", value: asReduced ? "reduce" : "no-preference" },
+  ],
 })
 
 const state = await evaluate(`(() => {
@@ -101,11 +109,80 @@ const state = await evaluate(`(() => {
 console.log("state:", JSON.stringify(state))
 
 if (state.error) process.exit(1)
+
+/*
+ * Get playback going, if it is not already.
+ *
+ * The rule everywhere in this repo is that a probe must not *start* playback by
+ * calling `audio.play()`: it advances the media clock but leaves the app's
+ * `isPlaying` false, so the lyrics pane stays on its paused backoff poll and the
+ * current line never moves — which is indistinguishable from a broken animation.
+ *
+ * Clicking the app's own transport button through a real input event is the one
+ * exception that is honest, because it goes through the app's own code and the
+ * app's own state. So that is what this does rather than making every invocation
+ * a two-command dance with `shot-nowplaying-quiet.mjs`.
+ */
 if (state.paused) {
-  console.error("\nThe audio is paused, so the current line will not move and this probe")
-  console.error("cannot tell a stopped clock from a broken animation. Re-run it with")
-  console.error("`shot-nowplaying-quiet.mjs` ending in `keep-playing`.")
-  process.exit(1)
+  /*
+   * A real double-click at real coordinates, through CDP.
+   *
+   * Both alternatives were tried and both fail in ways that look like success:
+   * `audio.play()` from a script advances the clock but leaves the app's
+   * `isPlaying` false, and `element.click()` from `Runtime.evaluate` does not
+   * grant user activation, so Chromium's autoplay policy blocks the play and the
+   * element stays paused — while the script has already printed that it clicked.
+   * Only a dispatched input event gets the element playing, and it goes through
+   * the app's own row handler, so the app's own state is correct too.
+   */
+  await evaluate(`(() => {
+    // Leave Now Playing first. That view marks the shell \`inert\` and traps
+    // focus, so a row in the library exists, is not disabled, and silently does
+    // nothing when clicked.
+    if (document.querySelector('.nowplaying')) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    }
+    const a = document.querySelector('audio')
+    if (a) { a.volume = 0; a.muted = true }
+    return true
+  })()`)
+  await new Promise((r) => setTimeout(r, 700))
+
+  const spot = await evaluate(`(() => {
+    const row = document.querySelectorAll('.row')[1] || document.querySelectorAll('.row')[0]
+    if (!row) return null
+    const t = row.querySelector('.row-title') ?? row
+    const r = t.getBoundingClientRect()
+    return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2) }
+  })()`)
+
+  if (!spot) {
+    console.error("\nNo track row to click. Is the library view open?")
+    process.exit(1)
+  }
+  for (let i = 1; i <= 2; i += 1) {
+    await send("Input.dispatchMouseEvent", {
+      type: "mousePressed", x: spot.x, y: spot.y, button: "left", clickCount: i,
+    })
+    await send("Input.dispatchMouseEvent", {
+      type: "mouseReleased", x: spot.x, y: spot.y, button: "left", clickCount: i,
+    })
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  console.log("was paused; double-clicked a row at", JSON.stringify(spot))
+  await new Promise((r) => setTimeout(r, 2000))
+  await new Promise((r) => setTimeout(r, 2500))
+  const after = await evaluate(`(() => {
+    const a = document.querySelector('audio')
+    return { paused: a ? a.paused : null, t: a ? Number(a.currentTime.toFixed(2)) : null }
+  })()`)
+  console.log("now:", JSON.stringify(after))
+  if (after.paused) {
+    console.error("\nStill paused, so the current line will not move and this probe cannot")
+    console.error("tell a stopped clock from a broken animation. Start playback in the app")
+    console.error("and re-run.")
+    process.exit(1)
+  }
 }
 
 const motion = await evaluate(
@@ -222,4 +299,38 @@ console.log(`\nRESULT: ${sawTransition ? "a transition is running" : "everything
 console.log("filters seen on the current line:")
 console.log(`  ${[...new Set(samples.map((s) => s.nowFilter))].join("\n  ")}`)
 
-process.exit(sawTransition ? 0 : 1)
+// --- 4. the reduced-motion branch, if that is what is running -------------
+if (!asReduced) {
+  console.log(
+    "\nRun again with `reduce` to check the reduced-motion branch: the scale\n" +
+      "hierarchy has to survive it, and the transition must not.",
+  )
+  process.exit(sawTransition ? 0 : 1)
+}
+
+/*
+ * Under reduced motion the two requirements are opposites of each other, and the
+ * mistake is satisfying one at the other's expense.
+ *
+ * The hierarchy must SURVIVE: the current line is still bigger and still lit.
+ * Scale and glow are static styles, not motion, and a current line that is
+ * neither is not identified at all.
+ *
+ * The transition must NOT survive: no overshoot, no travel, nothing that
+ * interpolates the transform.
+ */
+const allScales = [...new Set(settled.flatMap((s) => s.scales).map((n) => n.toFixed(3)))]
+const hierarchyIntact = allScales.length >= 2
+const settledNow = settled.map((s) => s.nowScale)
+const nowSnapped = settledNow.every((v) => v === 1)
+const anyMid = settledNow.some((v) => v < 0.999 && v > 0.7)
+
+console.log(`\n=== reduced motion ===`)
+console.log(`  every line's scale: ${allScales.sort().join(", ")}`)
+console.log(`  ${hierarchyIntact ? "OK   the size hierarchy survives" : "FAIL the hierarchy is gone — all lines are the same size"}`)
+console.log(`  ${nowSnapped ? "OK   the current line sits at exactly 1" : `WARN current line scale varies: ${[...new Set(settledNow)].join(", ")}`}`)
+console.log(`  ${!anyMid ? "OK   nothing is interpolating the transform" : "FAIL the transform is still animating"}`)
+
+const exit = hierarchyIntact && !anyMid
+console.log(`\nRESULT: ${exit ? "reduced motion keeps the hierarchy and drops the motion" : "reduced motion is wrong"}`)
+process.exit(exit ? 0 : 1)

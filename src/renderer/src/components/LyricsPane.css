@@ -100,7 +100,26 @@
    * states. The current line's top edge is therefore genuinely fixed.
    */
   max-width: 100%;
+  /*
+   * Right-aligned, set here rather than left to inherit from `.lyrics-focus`.
+   *
+   * This is a `<button>`, and the UA stylesheet gives buttons `text-align:
+   * center` as an explicit declaration on the element. An explicit declaration
+   * beats an inherited value no matter how far up the tree it is, so
+   * `.lyrics-focus { text-align: right }` was being silently overridden on every
+   * line. A one-row line looked fine — centred text that happens to fill its box
+   * still ends near the right edge — which is why it survived: a lyric that wraps
+   * to two rows is the only case where centring is visible, and it ended 139px
+   * short of the lines below it.
+   */
+  text-align: right;
   cursor: pointer;
+  /*
+   * Balance the rows of a wrapped line so neither is much longer than the other.
+   * Without it a two-row lyric puts almost the whole sentence on the first row
+   * and one word on the second, which reads as a heading and a caption rather
+   * than as one line of a song.
+   */
   text-wrap: balance;
 }
 
@@ -345,29 +364,39 @@
 }
 
 /*
- * Reduced motion drops the travel and keeps the focus change.
+ * Reduced motion stops the *animation*, not the *hierarchy*.
  *
- * A line that changes with no indication at all is worse for everyone, so the
- * blur and colour still move — they are the part that says *this* line is the one
- * being sung. Only the scale and the glow go, because those are the parts that
- * read as movement.
+ * This first said `transform: none !important` and `text-shadow: none`, on the
+ * reasoning that scale and glow "read as movement". That is wrong, and it is
+ * wrong in a way nobody would notice until they turned the setting on: both are
+ * static styles. A current line that is not bigger and not lit is not
+ * distinguished at all, and the pane becomes three grey lines of identical size
+ * that only change shade. Removing a decoration is a downgrade; removing the
+ * only thing that identifies the current line is a defect.
+ *
+ * So what actually goes is the *transition* on the transform and the glow, which
+ * is where the motion is: the overshoot pop and the glow bleeding in are the two
+ * things a person sensitive to motion would object to. The scale difference and
+ * the glow itself stay, applied instantly.
+ *
+ * Colour and blur keep a short linear fade, because a line that changes with no
+ * indication at all is worse for everyone and a fade travels nowhere.
  *
  * The word sweep goes entirely. It is a continuously moving thing driven from the
- * audio clock, which is the clearest possible case of what the preference is
- * about, and the words stay legible — they are simply all solid, which is what the
- * non-sung lines already do.
+ * audio clock, which is the clearest case of what the preference is about, and
+ * the words stay legible — simply all solid, like the non-sung lines.
  */
 @media (prefers-reduced-motion: reduce) {
   .lyric-now {
     transition:
       color 300ms linear,
       filter 300ms linear;
-    transform: none !important;
+    /* No `transform` in the list, so the promotion between states is instant.
+       The scale itself is untouched — see above. */
     will-change: auto;
   }
 
   .lyric-now.is-now {
-    text-shadow: none;
     will-change: auto;
   }
 

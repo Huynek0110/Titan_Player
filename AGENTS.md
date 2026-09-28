@@ -218,6 +218,16 @@ Each of these looked correct in review and was invisible until the app ran.
   temporal dead zone error, which Electron reports as "preload failed to load"**
   rather than as the line that caused it. Both `contextBridge.exposeInMainWorld`
   calls are at the bottom of `src/preload/index.ts`, after both objects.
+- **The UA stylesheet gives `<button>` an explicit `text-align: center`, and an
+  explicit declaration beats an inherited one at any distance.** The lyric lines
+  are buttons; `.lyrics-focus { text-align: right }` was being silently
+  overridden on every one of them. A one-row lyric looked correct — centred text
+  that fills its box still ends near the right edge — so it survived several
+  rounds of review, and only a lyric long enough to *wrap* showed it, ending
+  139px short of the lines below. `scripts/probe-lyric-alignment.mjs` measures the
+  text extent of every line with a `Range` and fails on any spread; it exists
+  because "does it look aligned" is not a question a screenshot answers when the
+  defect only appears on long lines.
 - **PowerShell string surgery corrupts UTF-8 and mangles multi-line `git commit -m`.**
   A backtick inside a commit message is eaten, so messages go through a file
   written with `[System.IO.File]::WriteAllText` and a BOM-less UTF8 encoding —
@@ -339,22 +349,50 @@ one thing this layout exists not to be. Apple Music's synced lyrics work the sam
 way: the current line resolves sharp and bright while the others recede and go
 soft, and nothing moves.
 
-Two consequences that will look like mistakes if undone:
+There is in fact no outgoing line. Every line is keyed on its timestamp and stays
+mounted, so the line that *was* current is the same DOM node now carrying
+`is-next-1`. The whole transition is a class change on a node that already
+exists, which deleted a timer, a ref, an effect and a duplicated DOM node.
 
-- **`filter: blur()` is allowed here, despite the motion policy.** It is excluded
-  for anything larger than a caption. Two lines of text changing once every few
-  seconds is the case where the depth cue *is* the effect, and blur is what makes
-  the block read as a surface with a depth rather than as three shades of grey.
-- **The lyric slots have natural height.** They were pinned to two lines so the
-  stack could not change height, and a one-line lyric then floated inside a
-  two-line box — the reported "the lines look separated". Top-aligning the stack
-  and letting the slots size to their content fixes it, because the current line is
-  first and its top edge then never moves. Only the dim lines below shift, and
-  only when the current line changes row count.
+**Every line is the same font size.** The hierarchy is `transform: scale` plus
+`filter: blur` plus colour plus a glow, and never `font-size`. That is not a
+preference, it is the fix for the "some lines look separated" complaint that took
+three attempts to solve:
 
-The current line's size is derived from the measured column width, not fixed: at a
-literal 40px a Vietnamese lyric wraps to two rows in a narrow window, which breaks
-the rhythm worse than a slightly smaller type does.
+- A `font-size` per state makes the current line's box change height on every
+  lyric change, so the lines below reflow and the current line jumps.
+- Worse, a larger font wraps differently from a smaller one, so a one-row
+  upcoming line becomes a two-row current line. The complaint is therefore a
+  function of line length — which is why it was reported as happening on *some*
+  lines.
+- Pinning slots to a fixed height to stop that made it worse: a one-line lyric
+  then floats inside a two-line box.
+
+A transform touches no layout, so wrapping is identical in all three states. The
+scales are 1 / 0.74 / 0.6, which at a 35px base renders as the same 35 / 26 / 21
+the old font ladder produced.
+
+The glow is what marks the line, and it is not optional decoration. Marking a
+line by making it bigger fights the layout; marking it by making it *lit* does
+not touch layout at all, so it can be as strong as it likes. `transform` gets an
+overshoot curve (`cubic-bezier(.34,1.3,.4,1)`) and colour and blur get a plain
+ease-out — the size change is what the eye tracks and earns the pop, the focus
+change should not wobble. `will-change` is on the active line only; on every line
+it gave a long song a hundred permanently-promoted compositor layers.
+
+**Reduced motion stops the animation, not the hierarchy.** An earlier version of
+the reduced-motion block set `transform: none` and `text-shadow: none`, reasoning
+that scale and glow "read as movement". That was wrong: both are static styles. A
+current line that is neither bigger nor lit is not identified at all, and the pane
+becomes three identical grey lines. What goes is the *transition* — the overshoot
+and the glow bleeding in — not the scale or the glow. `probe-lyric-animation.mjs
+reduce` asserts both halves, because either one alone looks fine.
+
+The word sweep (`--p`, from a rAF loop) applies only where the source has word
+timings, which locally means Enhanced LRC and almost nothing else. Its current
+line's size comes from a custom property, not a literal: a fixed 40px in a narrow
+window wraps a Vietnamese lyric onto two rows, and two rows for the current line
+breaks the rhythm worse than a slightly smaller type does.
 
 Rejected: `@applemusic-like-lyrics/react` and `lyric-kit` are both AGPL-3.0. The
 project is AGPL now — for the glass, not for anything here — but the lyrics pane
