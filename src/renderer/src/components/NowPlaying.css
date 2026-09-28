@@ -1,24 +1,34 @@
+/*
+ * The full-screen view.
+ *
+ * The organising idea is that the window *is* the record: the cover is scaled up
+ * and blurred behind everything, so the room takes the colour of the music
+ * instead of being a dark panel with a picture on it. Everything laid on top
+ * therefore has to survive an unpredictable background, which is why the scrim is
+ * a hard vertical ramp rather than a flat tint, and why text shadows are used
+ * sparingly instead of a panel behind every string.
+ */
+
 .nowplaying {
   position: absolute;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
-  /*
-   * No backdrop-filter, and the entry animation only moves. A blur behind a
-   * 92%-opaque black scrim is invisible work, and because the animation touched
-   * opacity the backdrop had to be recomputed on every frame of the transition,
-   * so opening this view was 320ms of continuous full-window blur.
-   */
-  background: rgba(6, 6, 10, 0.94);
+  overflow: hidden;
+  /* The last-resort colour for a track with no artwork: a neutral, not black,
+     so the composition does not fall apart when there is nothing to blur. */
+  background: #0a0a10;
   animation: np-in 300ms var(--ease);
 }
 
 @keyframes np-in {
   from {
+    opacity: 0;
     transform: translateY(14px);
   }
   to {
+    opacity: 1;
     transform: none;
   }
 }
@@ -29,187 +39,541 @@
   }
 }
 
-/* Applies for the lifetime of a splitter drag only, so text selection cannot
-   fight the pointer and the caret does not flicker over the column. */
-body.np-resizing {
-  cursor: col-resize;
-  user-select: none;
+/* --- the blurred cover ------------------------------------------------- */
+
+/*
+ * `inset: -12%` rather than `inset: 0`. A blur samples outward from the edge of
+ * its box, so a layer exactly the size of the window fades to transparent at the
+ * border and leaves a hard bright rim where the cover happens to be light.
+ * Overshooting means the whole viewport is covered by opaque pixels of the
+ * image, and there is nothing for the blur to fade into.
+ *
+ * Static, and deliberately so. This is a full-window `filter: blur()`; moving it
+ * would re-run that blur on every frame of the animation, which is the same
+ * mistake that made window resizing stutter. The crisp artwork below drifts
+ * instead, because it is a fraction of the area.
+ */
+.nowplaying-bg {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(72px) saturate(1.6) brightness(1.18);
+  /* Scaled up in addition to the overscan, so the cover's own edges are well
+     outside the viewport and cannot show. */
+  transform: scale(1.12);
 }
 
-.nowplaying-top {
+/*
+ * The accent bloom, laid over the blurred cover.
+ *
+ * A near-black cover blurs to near-black, which loses the entire point of the
+ * view: the window is supposed to be the colour of the record. Brightness alone
+ * cannot fix that, because there is no colour in a black image to brighten.
+ *
+ * `--accent` is already the right answer, because `palette.ts` extracts it from
+ * the cover's most saturated region precisely because that region carries the
+ * image's identity — a dark cover still has one vivid corner. So the glow
+ * guarantees the room takes the record's colour even when the photograph itself
+ * is nearly black, and it costs one gradient rather than a second blur.
+ *
+ * `screen` rather than `normal`, so this adds light to the cover instead of
+ * washing over it, and a bright cover is barely changed while a dark one lifts.
+ */
+.nowplaying-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  mix-blend-mode: screen;
+  opacity: 0.5;
+  background:
+    radial-gradient(58% 52% at 22% 20%, var(--accent) 0%, transparent 72%),
+    radial-gradient(52% 46% at 82% 34%, var(--accent) 0%, transparent 70%);
+}
+
+/*
+ * The scrim, and it is much lighter than instinct suggests.
+ *
+ * The reference is a *bright* window: a warm album floods the whole frame and the
+ * artwork is unmistakably the light source. An earlier pass here used a 60-86%
+ * ramp, which reads as a dark panel with a picture behind it — technically a
+ * "blurred background", and missing the entire point. So this only darkens enough
+ * to make white lyrics legible over an unpredictable image, and the left column
+ * gets a little more because its text is smaller and sits over the busiest part
+ * of the cover.
+ */
+.nowplaying-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      100deg,
+      rgba(6, 6, 10, 0.62) 0%,
+      rgba(6, 6, 10, 0.4) 32%,
+      rgba(6, 6, 10, 0.28) 60%,
+      rgba(6, 6, 10, 0.46) 100%
+    ),
+    linear-gradient(180deg, rgba(6, 6, 10, 0.34) 0%, rgba(6, 6, 10, 0.12) 32%, rgba(6, 6, 10, 0.6) 100%);
+}
+
+/* --- the volume rail on the window's left edge ------------------------- */
+
+/*
+ * Deliberately unlike every other control in the app, which is what makes it
+ * findable at all. A range input is rotated with `writing-mode` rather than
+ * `appearance: slider-vertical`, which is deprecated and inconsistently
+ * implemented; `direction: rtl` is what puts the top of the range at the top.
+ */
+.nowplaying-volume {
+  position: absolute;
+  left: var(--sp-7);
+  top: 50%;
+  z-index: 3;
+  transform: translateY(-50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  height: 56px;
-  padding: 0 20px;
-  flex-shrink: 0;
-  /* Same measure as the body: at 2560 the controls were marooned in the middle
-     of the window with 800px of nothing either side. */
-  width: 100%;
-  max-width: 1240px;
-  margin-inline: auto;
+  gap: var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--fg-1);
 }
 
-.nowplaying-source {
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--fg-3);
+.nowplaying-volume input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: var(--sp-6);
+  height: 132px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  /* The default track is a hairline in a colour chosen for a light form control;
+     on a blurred cover it disappears entirely. */
+  appearance: none;
+  -webkit-appearance: none;
 }
+
+.nowplaying-volume input[type="range"]::-webkit-slider-runnable-track {
+  width: 3px;
+  height: 100%;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.nowplaying-volume input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-left: -4px;
+  border-radius: var(--r-full);
+  background: #fff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
+}
+
+.nowplaying-volume input[type="range"]:focus-visible {
+  outline: none;
+}
+
+.nowplaying-volume input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 2px rgba(6, 6, 10, 0.8),
+    0 0 0 4px var(--fg-0);
+}
+
+.nowplaying-volume-btn {
+  display: grid;
+  place-items: center;
+  color: var(--fg-1);
+  transition: color var(--fast) var(--ease);
+}
+
+.nowplaying-volume-btn:hover {
+  color: var(--fg-0);
+}
+
+.nowplaying-volume-btn[aria-pressed="true"] {
+  color: var(--fg-0);
+}
+
+/* --- the floating control island --------------------------------------- */
+
+/*
+ * A detached card rather than a full-width strip. A strip would cut a hard line
+ * across the top of the cover, which is the one large uninterrupted shape in the
+ * composition.
+ */
+.nowplaying-dock {
+  position: absolute;
+  top: var(--sp-8);
+  right: var(--sp-8);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-radius: var(--r-lg);
+}
+
+/*
+ * The focus ring here is white rather than the app's accent.
+ *
+ * The close control takes focus when this view opens, and the accent is already
+ * carrying the play button and the whole background wash — a third accent
+ * surface, tracing a circle around a *close* button, reads as a destructive
+ * warning rather than as "this is where the keyboard is". A white ring is the
+ * same affordance with none of that reading, and it is the highest-contrast
+ * token available against an arbitrary photograph.
+ */
+.nowplaying-dock :focus-visible {
+  outline-color: var(--fg-0);
+}
+
+/* --- the source eyebrow ------------------------------------------------ */
+
+.nowplaying-eyebrow {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  margin: var(--sp-7) var(--gutter) 0;
+  max-width: 46ch;
+}
+
+.nowplaying-eyebrow > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--fg-1);
+}
+
+.nowplaying-eyebrow > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nowplaying-eyebrow-label {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-strong);
+  line-height: var(--lh-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  /* Over the brightest part of the wash, where even `--fg-3` drops below 4.5:1. */
+  color: var(--fg-2);
+}
+
+.nowplaying-eyebrow-value {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-strong);
+  line-height: var(--lh-lg);
+  color: var(--fg-0);
+}
+
+/* --- the two columns --------------------------------------------------- */
 
 .nowplaying-body {
+  position: relative;
+  z-index: 2;
   flex: 1;
   min-height: 0;
   display: grid;
-  /*
-   * Art | splitter | lyrics, on the same 24px rhythm the library, playlist and
-   * player bar use. The old 46px gap and 52px padding were off any scale in the
-   * app, and with no max-width the two columns sat stranded in the middle of a
-   * 2560px display.
-   *
-   * The splitter track is zero wide on purpose: the handle is a 26px box centred
-   * on it, so it occupies the gap between the columns and its hit area is a
-   * comfortable size without eating into either column.
-   */
-  grid-template-columns: 420px 0px var(--np-info, 620px);
-  column-gap: 24px;
-  padding: 0 24px 32px;
+  grid-template-columns: var(--np-art, 420px) 0px var(--np-info, 620px);
+  column-gap: var(--sp-10);
+  align-content: center;
+  /* The volume rail lives on the window's left edge, so the content column has
+     to clear it or the artwork overlaps the slider. */
+  padding: var(--sp-4) var(--gutter) var(--sp-9) 104px;
+  max-width: 1320px;
+  margin: 0 auto;
   width: 100%;
-  max-width: 1240px;
-  margin-inline: auto;
 }
-
-/* --- art column -------------------------------------------------------- */
 
 .nowplaying-art-col {
   display: flex;
   flex-direction: column;
+  /*
+   * Centred, not left-aligned. The cover is a fixed square and the text under it
+   * is short, so centring reads as a composed block; left-aligning it under a
+   * centred-looking square left the whole column looking accidentally offset.
+   */
   align-items: center;
-  justify-content: center;
-  gap: 20px;
+  text-align: center;
   min-width: 0;
-  min-height: 0;
-  overflow-y: auto;
+  justify-self: start;
 }
+
+/* --- the artwork ------------------------------------------------------- */
 
 .nowplaying-art {
   position: relative;
-  flex-shrink: 0;
-  transform: translate(var(--drift, 0), var(--drift-y, 0));
-  /*
-   * No transition here, and that is load-bearing rather than an omission. The
-   * drift is rewritten every animation frame; a transition on it makes the
-   * compositor chase a value that has already been replaced, which is a
-   * permanent per-frame interpolation for a motion that is supposed to be
-   * frame-accurate.
-   */
+  /* The drift is written from a rAF loop as a transform, so it composites. */
+  transform: translate3d(var(--drift, 0), var(--drift-y, 0), 0);
+  transition: none;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
 }
 
 .nowplaying-art .artwork {
   border-radius: var(--r-xl);
-  /*
-   * The hairline only. The elevation comes from the base in Artwork.css, which
-   * scales it from the artwork's own size — at 420px that is 42/118 against the
-   * 30/80 that was hand-picked here, and the softer falloff suits a hero better
-   * than a hard one. A hard-coded shadow here would override the base rather
-   * than add to it, and the two would drift apart again.
-   */
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+  /* A hairline to separate a pale cover from a pale scrim. */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* --- title, artist, album ---------------------------------------------- */
+
+.nowplaying-meta {
+  width: 100%;
+  margin-top: var(--sp-6);
+  min-width: 0;
+}
+
+.nowplaying-title {
+  margin: 0;
+  font-family: var(--font-display);
+  /* The one place `--fs-d3` is used. */
+  font-size: var(--fs-d3);
+  font-weight: var(--fw-display);
+  line-height: var(--lh-d3);
+  letter-spacing: var(--track-display);
+  color: var(--fg-0);
+  text-wrap: balance;
+}
+
+.nowplaying-artist {
+  margin: var(--sp-3) 0 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-body);
+  line-height: var(--lh-xl);
+  color: var(--fg-1);
+}
+
+.nowplaying-album {
+  margin: var(--sp-1) 0 0;
+  max-width: 100%;
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+  color: var(--fg-2);
+}
+
+/* --- transport --------------------------------------------------------- */
+
+.nowplaying-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  width: 100%;
+  margin-top: var(--sp-6);
+}
+
+.nowplaying-transport-gap {
+  width: var(--sp-4);
+  flex-shrink: 0;
 }
 
 /*
- * A wide, low-alpha radial gradient instead of a blurred accent-coloured bar.
- * The drift transform sits on the parent, and `filter: blur(46px)` under a
- * moving parent re-rasters the blurred surface on every frame of the sweep and
- * again on every window resize. Two gradient stops cost nothing and read the
- * same: light pooled under the object.
+ * The play button is the one sanctioned accent fill in the whole app, so it is
+ * the only one here too. Neutral elevation rather than an accent glow: a blur in
+ * the artwork's colour around a circle sitting on top of that same colour reads
+ * as a halo, not as depth.
  */
-.nowplaying-art-shadow {
-  position: absolute;
-  left: -6%;
-  right: -6%;
-  bottom: -72px;
-  height: 170px;
-  z-index: -1;
-  background: radial-gradient(
-    50% 50% at 50% 50%,
-    color-mix(in oklab, var(--accent) 62%, transparent) 0%,
-    transparent 72%
-  );
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-/* --- actions ----------------------------------------------------------- */
-
-.nowplaying-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
-
-.np-action {
-  padding: 6px 12px;
+.np-play {
+  display: grid;
+  place-items: center;
+  width: var(--play-btn, 46px);
+  height: var(--play-btn, 46px);
   border-radius: var(--r-full);
-  font-size: 12.5px;
-  font-weight: 560;
-  color: var(--fg-2);
+  color: var(--accent-fg);
+  background: var(--accent);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.5);
   transition:
-    color var(--fast) var(--ease),
+    transform var(--fast) var(--ease),
     background var(--fast) var(--ease);
 }
 
-.np-action:hover {
-  color: var(--fg-0);
-  background: rgba(255, 255, 255, 0.09);
+.np-play:hover {
+  transform: scale(1.07);
 }
 
-/* The one that fixes a broken track, so the only one with a surface. */
-.np-action.lead {
+.np-play:active {
+  transform: scale(0.95);
+}
+
+/* Icons over the blurred cover need a little more presence than they get on a
+   flat surface, so the ring is drawn rather than the fill raised. */
+.nowplaying-transport .icon-btn,
+.nowplaying-dock .icon-btn {
   color: var(--fg-1);
-  background: rgba(255, 255, 255, 0.09);
-  box-shadow: inset 0 0 0 1px var(--line-2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.nowplaying-transport .icon-btn:hover,
+.nowplaying-dock .icon-btn:hover {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.nowplaying-transport .icon-btn.on,
+.nowplaying-dock .icon-btn.on {
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* --- the inline seek bar ----------------------------------------------- */
+
+.nowplaying-seek {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  margin-top: var(--sp-4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--fg-2);
+}
+
+.nowplaying-seek-track {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.nowplaying-seek-rail {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: rgba(255, 255, 255, 0.22);
+  overflow: hidden;
+}
+
+.nowplaying-seek-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--fg-0);
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+.nowplaying-seek-track:hover .nowplaying-seek-rail {
+  height: 5px;
+}
+
+.nowplaying-seek-track:focus-visible {
+  outline: none;
+}
+
+/* The ring is on the rail, not a box around the whole 16px strip, which would
+   read as a floating rectangle. Instant rather than transitioned: a 400px
+   box-shadow repainted per frame, and a focus ring that takes 120ms to arrive is
+   late. */
+.nowplaying-seek-track:focus-visible .nowplaying-seek-rail {
+  box-shadow: 0 0 0 2px var(--bg-0), 0 0 0 4px var(--fg-0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nowplaying-seek-track:hover .nowplaying-seek-rail {
+    height: 3px;
+  }
+}
+
+/* --- the file actions -------------------------------------------------- */
+
+.nowplaying-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+}
+
+.np-action {
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: var(--fg-2);
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.np-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--fg-0);
+}
+
+/*
+ * "Load .lrc" is the action that rescues a track whose lyrics are missing or
+ * wrong, so it is the only one that gets a surface. The other two are
+ * file-management verbs and stay quiet until hovered.
+ */
+.np-action.lead {
+  background: rgba(255, 255, 255, 0.13);
+  color: var(--fg-0);
+  font-weight: var(--fw-medium);
 }
 
 .np-action.lead:hover {
-  color: var(--fg-0);
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.np-action[aria-pressed="true"] {
-  color: var(--fg-0);
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .np-action-divider {
   width: 1px;
   height: 16px;
-  margin: 0 5px;
-  background: var(--line-2);
+  margin: 0 var(--sp-1);
+  background: rgba(255, 255, 255, 0.16);
 }
 
-/* --- details ----------------------------------------------------------- */
+/* --- the details table ------------------------------------------------- */
 
 .nowplaying-facts {
-  width: 100%;
-  margin: 0;
-  padding: 14px 18px;
   display: grid;
-  gap: 9px 16px;
-  border-radius: var(--r-lg);
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid var(--line-1);
-  animation: facts-in 220ms var(--ease);
+  gap: var(--sp-3) var(--sp-5);
+  grid-template-columns: 124px minmax(0, 1fr);
+  width: 100%;
+  margin: var(--sp-6) 0 0;
+  padding-top: var(--sp-5);
+  border-top: 1px solid var(--line-1);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  animation: facts-in var(--mid) var(--ease);
+}
+
+.nowplaying-facts > div {
+  display: contents;
+}
+
+.nowplaying-facts dt {
+  color: var(--fg-2);
+  font-weight: var(--fw-body);
+}
+
+.nowplaying-facts dd {
+  margin: 0;
+  color: var(--fg-0);
+  font-weight: var(--fw-medium);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 @keyframes facts-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
@@ -217,106 +581,103 @@ body.np-resizing {
   }
 }
 
-.nowplaying-facts > div {
-  display: grid;
-  grid-template-columns: 124px 1fr;
-  gap: 12px;
-  align-items: baseline;
+@media (prefers-reduced-motion: reduce) {
+  .nowplaying-facts {
+    animation: none;
+  }
 }
 
-/*
- * A 10.5px uppercase label beside a 12.5px value, in a 400px panel, is a table
- * nobody asked for: the two columns ended up nearly the same visual weight at a
- * size nobody can read. The label is a plain sentence-case word in a real size,
- * and the value is set a step heavier so the pairing reads as a caption and its
- * content rather than as two rows of small print.
- */
-.nowplaying-facts dt {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--fg-3);
-}
-
-.nowplaying-facts dd {
-  margin: 0;
-  font-size: 13.5px;
-  font-weight: 560;
-  color: var(--fg-1);
-}
-
-/* --- splitter ---------------------------------------------------------- */
+/* --- the splitter ------------------------------------------------------ */
 
 .nowplaying-split {
   position: relative;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  /* The handle is wider than the zero-width track it sits in, centred on the
-     gap between the two columns. */
-  justify-self: center;
+  width: 0;
   align-self: stretch;
+  margin-block: var(--sp-4);
   cursor: col-resize;
   touch-action: none;
-  /* Nothing is transitioned here: the width follows the pointer, and a
-     transition would put the artwork and the lyrics a frame out of step with
-     the hand. */
+  z-index: 3;
 }
 
 .nowplaying-split-grip {
-  width: 2px;
-  height: 40px;
-  border-radius: var(--r-full);
-  background: var(--line-2);
+  position: absolute;
+  inset-block: 0;
+  left: -13px;
+  width: 26px;
+  display: grid;
+  place-items: center;
   transition: background var(--fast) var(--ease);
 }
 
-.nowplaying-split:hover .nowplaying-split-grip,
-.nowplaying-split:focus-visible .nowplaying-split-grip {
-  background: var(--line-3);
+.nowplaying-split-grip::after {
+  content: "";
+  width: 2px;
+  height: 44px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0);
+  transition: background var(--fast) var(--ease);
 }
 
-body.np-resizing .nowplaying-split-grip {
-  background: var(--accent);
-  opacity: 0.7;
+.nowplaying-split:hover .nowplaying-split-grip::after,
+.nowplaying-split:focus-visible .nowplaying-split-grip::after {
+  background: rgba(255, 255, 255, 0.3);
 }
 
-/* --- info column ------------------------------------------------------- */
+.nowplaying-split:focus-visible {
+  outline: none;
+}
+
+body.np-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* --- the lyrics column ------------------------------------------------- */
 
 .nowplaying-info {
+  position: relative;
+  min-width: 0;
+  align-self: center;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 5px;
-  min-width: 0;
-  min-height: 0;
-  padding-bottom: 24px;
-}
-
-.nowplaying-title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 44px;
-  font-weight: 800;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
-  color: var(--fg-0);
+  height: 100%;
 }
 
 /*
- * --fg-1, not the accent. The accent is spent on at most three things in this
- * app — the play button, the current-track indicator, focus rings — and a 19px
- * artist name in the artwork's own colour was a fourth, on the largest text
- * after the title.
+ * Narrow windows cannot hold a 420px cover and a 620px lyrics column plus the
+ * gaps, so the cover gives up its width first and the lyrics take the rest.
+ * Below the single-column threshold the lyrics simply move under the artwork
+ * rather than disappearing, which is the whole point of the view.
  */
-.nowplaying-artist {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 560;
-  color: var(--fg-1);
+@media (max-width: 1080px) {
+  .nowplaying-body {
+    --np-art: 300px;
+    column-gap: var(--sp-7);
+  }
 }
 
-.nowplaying-album {
-  margin: 0;
-  font-size: 14px;
-  color: var(--fg-2);
+@media (max-width: 860px) {
+  .nowplaying-body {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--sp-8);
+    overflow-y: auto;
+  }
+
+  .nowplaying-art-col {
+    justify-self: stretch;
+  }
+
+  .nowplaying-art {
+    width: min(100%, 320px);
+  }
+
+  .nowplaying-split {
+    display: none;
+  }
+
+  .nowplaying-info {
+    height: auto;
+  }
 }

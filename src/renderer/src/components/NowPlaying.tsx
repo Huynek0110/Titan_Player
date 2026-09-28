@@ -10,7 +10,22 @@ import {
 import type { usePlayer } from "../lib/usePlayer"
 import { formatDuration, formatBitrate, formatSampleRate, formatFileSize } from "../lib/format"
 import Artwork from "./Artwork"
-import { ChevronDown, Heart } from "./Icons"
+import {
+  ChevronDown,
+  Heart,
+  Library,
+  Next,
+  Pause,
+  Play,
+  Prev,
+  Queue,
+  Repeat,
+  RepeatOne,
+  Shuffle,
+  Volume,
+  VolumeLow,
+  VolumeMute,
+} from "./Icons"
 import "./NowPlaying.css"
 
 interface NowPlayingProps {
@@ -36,8 +51,23 @@ interface NowPlayingProps {
   onClose: () => void
   onOpenLyricsFile: () => void
   onReveal: () => void
-  /** The lyrics pane, mounted into the info column. */
+  /** The lyrics pane, mounted into the right-hand column. */
   children?: ReactNode
+
+  /*
+   * Transport state the player hook does not carry itself. All optional, so
+   * App.tsx can adopt them incrementally and the view still renders without
+   * them — a control with no state is worse than no control, so each one is
+   * omitted rather than shown in a state it cannot truthfully display.
+   */
+  shuffled?: boolean
+  repeat?: "off" | "all" | "one"
+  queueOpen?: boolean
+  onToggleQueue?: () => void
+  /** Seeked by the inline bar, in seconds from the start of the track. */
+  onSeek?: (seconds: number) => void
+  /** What kind of collection is playing, for the "Playing from" eyebrow. */
+  source?: "library" | "playlist" | "album" | "artist" | "favourites"
 }
 
 /** Width of the art column, fixed so the resize maths has one known term. */
@@ -59,9 +89,12 @@ const FOCUSABLE = [
 ].join(", ")
 
 /**
- * The full-screen view. Artwork and lyrics sit side by side rather than
- * switching, which is the layout Spotify removed from its desktop app in early
- * 2026 and drew heavy backlash for.
+ * The full-screen view.
+ *
+ * Artwork and lyrics sit side by side rather than switching, which is the layout
+ * Spotify removed from its desktop app in early 2026 and drew heavy backlash for.
+ * The cover is also blown up and blurred behind everything, so the whole window
+ * is the colour of the record rather than a dark panel with a picture on it.
  */
 export default function NowPlaying({
   track,
@@ -72,8 +105,15 @@ export default function NowPlaying({
   onOpenLyricsFile,
   onReveal,
   children,
+  shuffled = false,
+  repeat = "off",
+  queueOpen = false,
+  onToggleQueue,
+  onSeek,
+  source,
 }: NowPlayingProps) {
-  const { state } = player
+  const { state, toggle, previous, next, seek, toggleShuffle, cycleRepeat, setVolume, toggleMute } =
+    player
   const artWrapRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLElement>(null)
@@ -158,8 +198,11 @@ export default function NowPlaying({
   // and each new closure captured a clock value up to 250ms stale, so the sweep
   // was a 4Hz staircase; the `transition: transform` on the artwork then chased
   // that staircase a further frame behind. Persistently reading a ref, with no
-  // transition, gives one smooth sweep — and the residual 4Hz sampling of the
-  // clock is sub-pixel here, because the whole drift is 8px over a whole track.
+  // transition, gives one smooth sweep.
+  //
+  // Only the crisp artwork drifts. The blurred backdrop is a full-window layer,
+  // and moving it would re-run a large Gaussian blur on every frame of the
+  // animation — the same mistake that made window resizing stutter.
   const clockRef = useRef({ time: 0, duration: 0 })
   useEffect(() => {
     clockRef.current.time = state.time
@@ -253,20 +296,75 @@ export default function NowPlaying({
   const onSplitKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const step = SPLIT_STEP
-      let next: number | null = null
-      if (event.key === "ArrowRight") next = infoWidth + step
-      else if (event.key === "ArrowLeft") next = infoWidth - step
-      else if (event.key === "PageDown") next = infoWidth + step * 4
-      else if (event.key === "PageUp") next = infoWidth - step * 4
-      else if (event.key === "Home") next = minInfo
-      else if (event.key === "End") next = maxInfo
-      if (next === null) return
+      let nextWidth: number | null = null
+      if (event.key === "ArrowRight") nextWidth = infoWidth + step
+      else if (event.key === "ArrowLeft") nextWidth = infoWidth - step
+      else if (event.key === "PageDown") nextWidth = infoWidth + step * 4
+      else if (event.key === "PageUp") nextWidth = infoWidth - step * 4
+      else if (event.key === "Home") nextWidth = minInfo
+      else if (event.key === "End") nextWidth = maxInfo
+      if (nextWidth === null) return
       // Stopped here rather than allowed to bubble: the app's global shortcuts
       // ignore anything already default-prevented, and Shift+Arrow is seek.
       event.preventDefault()
-      setRequested(next)
+      setRequested(nextWidth)
     },
     [infoWidth, minInfo, maxInfo],
+  )
+
+  // --- inline seek bar ---------------------------------------------------
+  /*
+   * A second, self-contained slider in the left column rather than a mirror of
+   * the one in the player bar. A reflected value cannot be dragged and would go
+   * stale the moment the two disagreed, so this owns its own drag and reports the
+   * target upward. While dragging, the displayed position is the pointer's, not
+   * the track's — otherwise the thumb fights the mouse.
+   */
+  const seekTrackRef = useRef<HTMLDivElement>(null)
+  const [seekDrag, setSeekDrag] = useState<number | null>(null)
+
+  // Read through the optional because these hooks run before the `!track` guard:
+  // a hook that is called conditionally breaks the rules of hooks, and the guard
+  // has to stay below all of them.
+  const liveDuration = state.duration || track?.duration || 0
+  const shown = seekDrag ?? (liveDuration > 0 ? Math.min(1, state.time / liveDuration) : 0)
+
+  const seekFromPointer = useCallback(
+    (clientX: number) => {
+      const el = seekTrackRef.current
+      if (!el || liveDuration <= 0) return
+      const rect = el.getBoundingClientRect()
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
+      setSeekDrag(ratio)
+    },
+    [liveDuration],
+  )
+
+  const commitSeek = useCallback(
+    (ratio: number) => {
+      const target = ratio * liveDuration
+      // Seek both the element and the store, so the queue panel and the player
+      // bar agree with this bar immediately rather than on the next tick.
+      seek(target)
+      onSeek?.(target)
+    },
+    [liveDuration, seek, onSeek],
+  )
+
+  const onSeekKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (liveDuration <= 0) return
+      const step = event.shiftKey ? 30 : 5
+      let to: number | null = null
+      if (event.key === "ArrowRight" || event.key === "ArrowUp") to = state.time + step
+      else if (event.key === "ArrowLeft" || event.key === "ArrowDown") to = state.time - step
+      else if (event.key === "Home") to = 0
+      else if (event.key === "End") to = liveDuration
+      if (to === null) return
+      event.preventDefault()
+      commitSeek(Math.max(0, Math.min(1, to / liveDuration)))
+    },
+    [state.time, liveDuration, commitSeek],
   )
 
   if (!track) return null
@@ -276,16 +374,56 @@ export default function NowPlaying({
     ...(track.year ? ([["Year", String(track.year)]] as Array<[string, string]>) : []),
     ...(track.genre.length ? ([["Genre", track.genre.join(", ")]] as Array<[string, string]>) : []),
     ["Duration", formatDuration(track.duration)],
-    ["Quality", `${track.lossless ? "Lossless" : "Lossy"}${formatBitrate(track.bitrate) ? ` · ${formatBitrate(track.bitrate)}` : ""}`],
-    ...(track.sampleRate ? ([["Sample rate", formatSampleRate(track.sampleRate)!]] as Array<[string, string]>) : []),
-    ...(track.channels ? ([["Channels", track.channels === 1 ? "Mono" : track.channels === 2 ? "Stereo" : `${track.channels} channels`]] as Array<[string, string]>) : []),
+    [
+      "Quality",
+      `${track.lossless ? "Lossless" : "Lossy"}${formatBitrate(track.bitrate) ? ` · ${formatBitrate(track.bitrate)}` : ""}`,
+    ],
+    ...(track.sampleRate
+      ? ([["Sample rate", formatSampleRate(track.sampleRate)!]] as Array<[string, string]>)
+      : []),
+    ...(track.channels
+      ? ([
+          [
+            "Channels",
+            track.channels === 1
+              ? "Mono"
+              : track.channels === 2
+                ? "Stereo"
+                : `${track.channels} channels`,
+          ],
+        ] as Array<[string, string]>)
+      : []),
     ["Size", formatFileSize(track.fileSize)],
-    ["Lyrics", track.lyrics.source === "none" ? "Not tagged" : "Embedded"],
+    [
+      "Lyrics",
+      track.lyrics.source === "none"
+        ? "Not tagged"
+        : track.lyrics.source === "online"
+          ? "From LRCLib"
+          : "Embedded",
+    ],
   ]
+
+  /*
+   * "Playing from" names the kind of collection, and the value names it. The
+   * kind comes from the caller because only the app knows whether the queue was
+   * built from a playlist, an album view or the whole library — the renderer
+   * cannot tell from the track alone, and guessing would be wrong whenever an
+   * album happened to be playing.
+   */
+  const sourceKind = source ?? "library"
+  const sourceLabel = track.album.trim() || "Your library"
+  const VolumeGlyph = state.muted || state.volume === 0 ? VolumeMute : state.volume < 0.5 ? VolumeLow : Volume
+
+  const coverUrl = track.hasArtwork ? window.titan.coverUrl(track.id, true) : null
 
   const gridStyle = {
     "--np-info": `${infoWidth}px`,
   } as CSSProperties
+
+  const RepeatGlyph = repeat === "one" ? RepeatOne : Repeat
+  const repeatTitle =
+    repeat === "one" ? "Repeat one" : repeat === "all" ? "Repeat all" : "Repeat off"
 
   return (
     <section
@@ -295,22 +433,89 @@ export default function NowPlaying({
       aria-modal="true"
       aria-label={`Now playing: ${track.title}`}
     >
-      <div className="nowplaying-top">
+      {/*
+        The cover, blown up and blurred, behind everything.
+
+        Scaled past the viewport so the blur cannot sample the window edge and
+        produce a hard bright rim. Static on purpose: this is a full-window
+        `filter: blur()`, and animating it would re-run that blur every frame.
+      */}
+      {coverUrl && (
+        <div
+          className="nowplaying-bg"
+          aria-hidden="true"
+          style={{ backgroundImage: `url("${coverUrl}")` }}
+        />
+      )}
+      <div className="nowplaying-scrim" aria-hidden="true" />
+
+      {/*
+        The floating control island. The reference layout puts repeat and close
+        together in a detached card rather than in a full-width strip, which keeps
+        the top of the window free for the artwork and stops a row of chrome from
+        cutting across the cover.
+      */}
+      <div className="nowplaying-dock glass">
+        <button
+          className={`icon-btn ${repeat !== "off" ? "on" : ""}`}
+          onClick={cycleRepeat}
+          aria-label={repeatTitle}
+          title={repeatTitle}
+        >
+          <RepeatGlyph size={17} />
+        </button>
         <button
           className="icon-btn"
           onClick={onClose}
           ref={closeRef}
           aria-label="Close now playing"
+          title="Close"
         >
-          <ChevronDown size={22} />
+          <ChevronDown size={20} />
         </button>
-        <span className="nowplaying-source truncate">Playing from library</span>
+      </div>
+
+      <p className="nowplaying-eyebrow">
+        <Library size={17} />
+        <span>
+          <span className="nowplaying-eyebrow-label">Playing from {sourceKind}</span>
+          <span className="nowplaying-eyebrow-value truncate">{sourceLabel}</span>
+        </span>
+      </p>
+
+      {/*
+        Volume, standing on the window's left edge rather than in a bar.
+
+        A vertical range input is `writing-mode: vertical-lr` with a reversed
+        `direction`, not the deprecated `appearance: slider-vertical`. The label
+        is a real number rather than a tooltip, because on a control this
+        deliberately unlike every other one in the app, the value has to be
+        readable at a glance.
+      */}
+      <div className="nowplaying-volume">
+        <span className="tabular" aria-hidden="true">
+          {Math.round((state.muted ? 0 : state.volume) * 100)}%
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={state.muted ? 0 : state.volume}
+          onChange={(event) => setVolume(Number(event.target.value))}
+          aria-label={state.muted ? "Volume, muted" : "Volume"}
+          aria-valuetext={
+            state.muted ? "Muted" : `${Math.round(state.volume * 100)} percent`
+          }
+        />
         <button
-          className={`icon-btn ${isFavourite ? "on" : ""}`}
-          onClick={onToggleFavourite}
-          aria-label="Toggle favourite"
+          className="nowplaying-volume-btn"
+          onClick={toggleMute}
+          aria-label={state.muted ? "Unmute" : "Mute"}
+          aria-pressed={state.muted}
+          title={state.muted ? "Unmute" : "Mute"}
         >
-          <Heart size={18} filled={isFavourite} />
+          <VolumeGlyph size={17} />
         </button>
       </div>
 
@@ -324,15 +529,132 @@ export default function NowPlaying({
               size={ART_W}
               seed={track.title}
             />
-            <div className="nowplaying-art-shadow" aria-hidden="true" />
+          </div>
+
+          <div className="nowplaying-meta">
+            <h1 className="nowplaying-title">{track.title}</h1>
+            <p className="nowplaying-artist">{track.artist}</p>
+            <p className="nowplaying-album truncate">
+              {[track.album, track.year].filter(Boolean).join(" · ")}
+            </p>
           </div>
 
           {/*
-            Not three identical pills. "Load .lrc" is the one that rescues a
-            track whose lyrics are missing or wrong, so it is the only one that
-            gets a surface; the other two are file-management verbs and stay
-            quiet until hovered. The divider says the first is a different kind
-            of action from the pair after it.
+            The transport, repeated here rather than borrowed from the player bar.
+            Two copies of a control are a maintenance cost, but the player bar is
+            40px of chrome pinned to the bottom of the library, which is a
+            different context from a full-screen view of one record — and a view
+            that is 60% artwork and lyrics with no way to pause from it is not
+            worth opening.
+          */}
+          <div className="nowplaying-transport">
+            <button
+              className={`icon-btn ${isFavourite ? "on" : ""}`}
+              onClick={onToggleFavourite}
+              aria-label={isFavourite ? "Remove from favourites" : "Add to favourites"}
+              aria-pressed={isFavourite}
+              title={isFavourite ? "Remove from favourites" : "Add to favourites"}
+            >
+              <Heart size={17} filled={isFavourite} />
+            </button>
+            <button
+              className={`icon-btn ${shuffled ? "on" : ""}`}
+              onClick={toggleShuffle}
+              aria-label="Shuffle"
+              aria-pressed={shuffled}
+              title={shuffled ? "Shuffle on" : "Shuffle off"}
+            >
+              <Shuffle size={17} />
+            </button>
+
+            <span className="nowplaying-transport-gap" aria-hidden="true" />
+
+            <button
+              className="icon-btn"
+              onClick={previous}
+              disabled={!state.isPlaying && state.time < 3}
+              aria-label="Previous"
+              title="Previous"
+            >
+              <Prev size={20} />
+            </button>
+            <button
+              className="np-play"
+              onClick={toggle}
+              aria-label={state.isPlaying ? "Pause" : "Play"}
+            >
+              {state.isPlaying ? <Pause size={22} /> : <Play size={22} />}
+            </button>
+            <button className="icon-btn" onClick={next} aria-label="Next" title="Next">
+              <Next size={20} />
+            </button>
+
+            <span className="nowplaying-transport-gap" aria-hidden="true" />
+
+            {onToggleQueue && (
+              <button
+                className={`icon-btn ${queueOpen ? "on" : ""}`}
+                onClick={onToggleQueue}
+                aria-label="Queue"
+                aria-expanded={queueOpen}
+                title="Queue"
+              >
+                <Queue size={17} />
+              </button>
+            )}
+          </div>
+
+          {/*
+            The seek bar. Its own drag state, because a reflected value cannot be
+            dragged and would disagree with the player bar the moment the two
+            ticked differently.
+          */}
+          <div className="nowplaying-seek">
+            <span className="tabular">{formatDuration(seekDrag !== null ? seekDrag * liveDuration : state.time)}</span>
+            <div
+              className="nowplaying-seek-track"
+              ref={seekTrackRef}
+              role="slider"
+              tabIndex={liveDuration > 0 ? 0 : -1}
+              aria-label="Seek"
+              aria-valuemin={0}
+              aria-valuemax={Math.round(liveDuration)}
+              aria-valuenow={Math.round((seekDrag ?? shown) * liveDuration)}
+              aria-valuetext={formatDuration((seekDrag ?? shown) * liveDuration)}
+              aria-disabled={liveDuration === 0}
+              onPointerDown={(event) => {
+                if (liveDuration <= 0) return
+                event.currentTarget.setPointerCapture(event.pointerId)
+                seekFromPointer(event.clientX)
+              }}
+              onPointerMove={(event) => {
+                if (seekDrag === null) return
+                seekFromPointer(event.clientX)
+              }}
+              onPointerUp={(event) => {
+                if (seekDrag === null) return
+                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                  event.currentTarget.releasePointerCapture(event.pointerId)
+                }
+                commitSeek(seekDrag)
+                setSeekDrag(null)
+              }}
+              onPointerCancel={() => setSeekDrag(null)}
+              onKeyDown={onSeekKeyDown}
+            >
+              <div className="nowplaying-seek-rail">
+                <div className="nowplaying-seek-fill" style={{ transform: `scaleX(${shown})` }} />
+              </div>
+            </div>
+            <span className="tabular">{formatDuration(liveDuration)}</span>
+          </div>
+
+          {/*
+            Not three identical pills. "Load .lrc" is the one that rescues a track
+            whose lyrics are missing or wrong, so it is the only one that gets a
+            surface; the other two are file-management verbs and stay quiet until
+            hovered. The divider says the first is a different kind of action from
+            the pair after it.
           */}
           <div className="nowplaying-actions">
             <button
@@ -394,12 +716,7 @@ export default function NowPlaying({
           <span className="nowplaying-split-grip" />
         </div>
 
-        <div className="nowplaying-info">
-          <h1 className="nowplaying-title">{track.title}</h1>
-          <p className="nowplaying-artist">{track.artist}</p>
-          {track.album && <p className="nowplaying-album">{track.album}</p>}
-          {children}
-        </div>
+        <div className="nowplaying-info">{children}</div>
       </div>
     </section>
   )

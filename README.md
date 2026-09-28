@@ -49,6 +49,13 @@ installer.
 - Nudge the timing forward or back when a file's sync is off
 - Falls back to a readable plain-text view when there is no timing data
 - Load an external `.lrc` from anywhere without touching the audio file
+- **Optional online lookup.** When a track has no lyrics in its tags and no `.lrc`
+  beside it, Titan Player can ask [LRCLib](https://lrclib.net) for them. Off by
+  default, because an automatic lookup tells a third-party server the artist,
+  title and album of everything you play. Results are cached on your machine for
+  a month, matched against the track's duration so a live take or a cover is not
+  substituted for the studio version, and never replace lyrics the file already
+  carries. Turn it on in Settings, where the privacy tradeoff is spelled out.
 
 **Player**
 
@@ -58,6 +65,10 @@ installer.
 - "Play next", "add to queue", and multi-select queueing
 - Frequency-bar visualiser driven from a Web Audio analyser
 - Track details panel: full technical readout of the current file
+- A full-screen now-playing view: the cover blown up and blurred behind the whole
+  window, a vertical volume rail on the left edge, the transport and a seek bar
+  inline under the artwork, and the lyrics opposite. The lyrics column is
+  resizable by dragging or by arrow keys.
 - Keyboard: `Space` play/pause, `Shift+←/→` seek, `↑/↓` volume, `/` search,
   `Q` queue, `S` settings, `L` library. `Esc` closes the queue panel and the
   now-playing view; it does nothing on the library itself.

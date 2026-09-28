@@ -58,6 +58,43 @@
 }
 
 /*
+ * The privacy note, shown only while online lookup is on. It is set apart from
+ * the surrounding prose because it is the one paragraph here that is not about
+ * how a feature works but about what it costs, and a reader skimming for
+ * instructions should not be able to miss it.
+ *
+ * Amber rather than the accent: the accent means "this is the current thing", and
+ * reusing it here would compete with the transport's own accent-coloured control
+ * a few pixels away in a different window.
+ */
+.settings-privacy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--surface-1);
+  box-shadow: inset 3px 0 0 var(--warn);
+  color: var(--fg-1);
+}
+
+.settings-privacy > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.settings-privacy > span {
+  min-width: 0;
+}
+
+.settings-privacy strong {
+  color: var(--fg-0);
+  font-weight: var(--fw-medium);
+}
+
+/*
  * Neutral, not accented. `music-metadata` and `media://` are not interactive
  * targets, so spending the one artwork-derived accent on them made the accent
  * stop meaning "this is the current thing".

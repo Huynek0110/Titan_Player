@@ -10,6 +10,7 @@ import {
   pruneCovers,
   configureAudioExtensions,
 } from "./protocol.js"
+import { lookupLyrics, forgetLyrics, type LookupTarget } from "./lyrics-online.js"
 import {
   createPlaylist,
   deletePlaylist,
@@ -257,6 +258,37 @@ function registerIpc(): void {
     if (result.canceled || result.filePaths.length === 0) return null
     const { promises: fs } = await import("node:fs")
     return { path: result.filePaths[0], content: await fs.readFile(result.filePaths[0], "utf8") }
+  })
+
+  /*
+   * Online lyrics lookup.
+   *
+   * The renderer supplies the track's metadata rather than a URL, so there is no
+   * value here for a compromised renderer to redirect at a host of its choosing.
+   * The host is fixed in main/lyrics-online.ts, and the response is parsed and
+   * size-capped before it is returned, so nothing unvalidated reaches the pane.
+   *
+   * One in flight at a time and the newest wins: skipping past a track should
+   * abandon its lookup rather than queue it behind the next one, and letting a
+   * superseded answer land would overwrite the lyrics for whatever is playing.
+   */
+  let onlineInFlight: AbortController | null = null
+  ipcMain.handle("lyrics:lookup", async (_event, target: LookupTarget) => {
+    onlineInFlight?.abort()
+    const controller = new AbortController()
+    onlineInFlight = controller
+    try {
+      return await lookupLyrics(target, getSettings().fetchOnlineLyrics, controller.signal)
+    } finally {
+      if (onlineInFlight === controller) onlineInFlight = null
+    }
+  })
+
+  // Forgets a cached answer so the next request reaches the network. The escape
+  // hatch for a lookup that returned the wrong recording.
+  ipcMain.handle("lyrics:lookup-forgot", async (_event, target: LookupTarget) => {
+    await forgetLyrics(target)
+    return true
   })
 
   ipcMain.on("window:minimize", () => mainWindow?.minimize())

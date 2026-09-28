@@ -65,8 +65,13 @@ export interface Lyrics {
   lines: LyricLine[]
   /** Plain text fallback when the source has no timing information at all. */
   plain?: string
-  /** Where the lyrics came from, for the UI to explain an empty view. */
-  source: "embedded" | "lrc-sidecar" | "none"
+  /**
+   * Where the lyrics came from, for the UI to explain an empty view.
+   *
+   * `online` is fetched from a third-party lyrics database rather than read off
+   * the file, so the UI credits it and Settings can explain what it cost.
+   */
+  source: "embedded" | "lrc-sidecar" | "online" | "none"
 }
 
 export interface Track {
@@ -131,6 +136,16 @@ export interface LibrarySettings {
   /** Sort order for track lists. */
   sortBy: "title" | "artist" | "album" | "duration" | "added"
   sortDir: "asc" | "desc"
+  /**
+   * Look lyrics up online when a track has none locally.
+   *
+   * This is off by default and the reason is not caution for its own sake: an
+   * automatic lookup sends the artist, the title and the album of every track
+   * you play to a third-party server, which is a record of your listening. The
+   * app works completely without it, so the user turns it on deliberately rather
+   * than discovering it happened.
+   */
+  fetchOnlineLyrics: boolean
 }
 
 export interface ScanProgress {

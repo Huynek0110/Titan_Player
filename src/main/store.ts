@@ -52,6 +52,11 @@ function defaultSettings(): LibrarySettings {
     // intended rather than alphabetically.
     sortBy: "album",
     sortDir: "asc",
+    // Off by default. An automatic lookup tells a third-party server the artist,
+    // title and album of every track played, which is a record of what the user
+    // listens to. The app is complete without it, so the choice is made
+    // deliberately in Settings rather than discovered after the fact.
+    fetchOnlineLyrics: false,
   }
 }
 

@@ -117,6 +117,101 @@ export default function App() {
   const lyrics =
     lyricOverride && lyricOverride.id === currentTrack?.id ? lyricOverride.lyrics : currentTrack?.lyrics
 
+  // --- online lyrics lookup ----------------------------------------------
+  /*
+   * Runs when a track with no local lyrics starts playing, and only then.
+   *
+   * A local source always wins: a tag or a sidecar `.lrc` was put there
+   * deliberately by whoever tagged the file, and replacing it with a database's
+   * guess would override an intentional choice with an automatic one. Looking
+   * up unconditionally would also mean a request per track change whether or not
+   * it was needed, which is both wasteful and a larger privacy footprint than the
+   * feature requires.
+   *
+   * The result is held in the same `lyricOverride` slot as a hand-picked file, so
+   * a user who loads their own `.lrc` afterwards simply overwrites the fetched
+   * answer, and there is one place that decides which lyrics are on screen.
+   */
+  const [onlineState, setOnlineState] = useState<{
+    id: string
+    status: "idle" | "searching" | "not-found" | "offline" | "disabled"
+    detail?: string
+  }>({ id: "", status: "idle" })
+
+  const lookupTarget = useMemo(
+    () =>
+      currentTrack
+        ? {
+            id: currentTrack.id,
+            title: currentTrack.title,
+            artist: currentTrack.artist,
+            album: currentTrack.album,
+            duration: currentTrack.duration,
+          }
+        : null,
+    [currentTrack],
+  )
+
+  useEffect(() => {
+    if (!lookupTarget || !store.settings?.fetchOnlineLyrics) {
+      setOnlineState({ id: "", status: "idle" })
+      return
+    }
+    // Nothing to gain: the file already carries lyrics, or the user has supplied
+    // their own for this exact track.
+    if (currentTrack?.lyrics.source !== "none") return
+    if (lyricOverride?.id === lookupTarget.id) return
+
+    let live = true
+    setOnlineState({ id: lookupTarget.id, status: "searching" })
+
+    void window.titan
+      .lookupLyrics(lookupTarget)
+      .then((result) => {
+        // A superseded request must not write. Skipping a track is fast and the
+        // replies can arrive out of order.
+        if (!live) return
+        if (result.outcome === "found" && result.lyrics) {
+          setLyricOverride({ id: lookupTarget.id, lyrics: result.lyrics })
+          setOnlineState({ id: lookupTarget.id, status: "idle", detail: result.detail })
+        } else if (result.outcome === "not-found") {
+          setOnlineState({ id: lookupTarget.id, status: "not-found", detail: result.detail })
+        } else if (result.outcome === "disabled") {
+          setOnlineState({ id: lookupTarget.id, status: "disabled" })
+        } else {
+          setOnlineState({ id: lookupTarget.id, status: "offline", detail: result.detail })
+        }
+      })
+      .catch(() => {
+        // Never a fatal error. This is a local player with an optional extra, and
+        // a network problem must not become an error dialog over a working app.
+        if (live) setOnlineState({ id: lookupTarget.id, status: "offline" })
+      })
+
+    return () => {
+      live = false
+    }
+  }, [lookupTarget, currentTrack?.lyrics.source, lyricOverride?.id, store.settings?.fetchOnlineLyrics])
+
+  /** Forget the cached answer and try again, for a lookup that matched wrongly. */
+  const retryOnlineLyrics = useCallback(async () => {
+    if (!lookupTarget) return
+    setOnlineState({ id: lookupTarget.id, status: "searching" })
+    // Drop the override first, or the effect above would treat the track as
+    // already supplied and never fire the new lookup.
+    setLyricOverride(null)
+    await window.titan.forgetLyrics(lookupTarget)
+    const result = await window.titan.lookupLyrics(lookupTarget)
+    if (result.outcome === "found" && result.lyrics) {
+      setLyricOverride({ id: lookupTarget.id, lyrics: result.lyrics })
+      setOnlineState({ id: lookupTarget.id, status: "idle", detail: result.detail })
+    } else if (result.outcome === "not-found") {
+      setOnlineState({ id: lookupTarget.id, status: "not-found", detail: result.detail })
+    } else {
+      setOnlineState({ id: lookupTarget.id, status: "offline", detail: result.detail })
+    }
+  }, [lookupTarget])
+
   // --- content routing ---------------------------------------------------
   const body = useMemo(() => {
     switch (view) {
@@ -311,6 +406,22 @@ export default function App() {
           onClose={() => store.setNowPlaying(false)}
           onOpenLyricsFile={() => void loadLyricsFile()}
           onReveal={() => void window.titan.revealInExplorer(currentTrack.path)}
+          shuffled={store.shuffled}
+          repeat={store.settings?.repeat ?? "off"}
+          queueOpen={store.showQueue}
+          onToggleQueue={() => store.setShowQueue(!store.showQueue)}
+          onSeek={player.seek}
+          source={
+            view === "playlist"
+              ? "playlist"
+              : view === "favourites"
+                ? "favourites"
+                : view === "albums"
+                  ? "album"
+                  : view === "artists"
+                    ? "artist"
+                    : "library"
+          }
         >
           <LyricsPane
             lines={lyrics?.lines ?? currentTrack.lyrics.lines}
@@ -319,6 +430,15 @@ export default function App() {
             isPlaying={player.state.isPlaying}
             onSeek={player.seek}
             hasAny={(lyrics ?? currentTrack.lyrics).source !== "none"}
+            onlineStatus={
+              onlineState.id === currentTrack.id &&
+              onlineState.status !== "idle" &&
+              onlineState.status !== "disabled"
+                ? onlineState.status
+                : undefined
+            }
+            onlineDetail={onlineState.detail}
+            onRetryOnline={() => void retryOnlineLyrics()}
           />
         </NowPlaying>
       )}

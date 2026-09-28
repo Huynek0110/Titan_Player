@@ -41,7 +41,9 @@ Every component has a colocated `.css` file.
 ### Still to do
 
 1. `npm run dist` and verify the packaged app.
-2. Commit and push to `https://github.com/Huynek0110/Titan_Player`.
+2. `scripts/README.md` documents the CDP diagnostics. Use
+   `shot-nowplaying-quiet.mjs`, not `shot-nowplaying.mjs`, when sound is not
+   wanted — the first pins the volume to zero, the second plays the track.
 
 Everything else on the original list is complete: `electron-builder.yml`,
 `build/icon.png` (1024×1024, rendered from `icon.svg` by
@@ -95,7 +97,31 @@ from the renderer would drag `electron` into the browser bundle.
 | `src/renderer/src/lib/palette.ts` | Hue-bucketed dominant-colour extraction on a 64×64 canvas, memoised, with luminance-based readable text. |
 | `src/renderer/src/styles/global.css` | Design tokens, ambient wash, grain overlay, scrollbars, focus rings, reduced-motion. |
 
-### Bugs that only a running app could find
+## Online lyrics
+
+LRCLib, and only when a track has no lyrics in its tags and no `.lrc` beside it.
+`src/main/lyrics-online.ts` owns it. Three decisions worth not re-litigating:
+
+- **It runs in the main process, not the renderer.** A `connect-src` widened to
+  a lyrics host would be a policy relaxation for the whole app and the whole
+  session, rather than only while a lookup is in flight. The renderer sends
+  metadata, never a URL, so there is nothing there for it to redirect.
+- **It is off by default.** An automatic lookup sends the artist, title and album
+  of everything you play to another machine, which is a record of your listening.
+  The app is complete without it, so the choice is made in Settings rather than
+  discovered afterwards.
+- **Duration is the strongest matching signal.** Two recordings of one song share
+  a title and differ in length, and a lyric file timed for the other one is
+  visibly wrong within seconds. A candidate more than 12 seconds off is rejected
+  rather than ranked, and anything scoring below the threshold is treated as a
+  different song — showing near-miss lyrics is worse than showing none, because
+  the user cannot tell and will trust them.
+
+Matches are cached by artist/title/duration rather than by path, so a re-tag or a
+moved file still hits. A confirmed miss is cached too, or every track without
+lyrics would re-query on every play.
+
+## Bugs that only a running app could find
 
 Each of these looked correct in review and was invisible until the app ran.
 

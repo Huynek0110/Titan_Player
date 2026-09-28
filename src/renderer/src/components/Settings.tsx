@@ -284,6 +284,59 @@ export default function Settings({ failedFiles = [] }: SettingsProps) {
         </section>
 
         <section className="settings-card">
+          <h2>Lyrics</h2>
+          <p className="settings-note">
+            Lyrics are read from the file's own tags first, and from a{" "}
+            <code>.lrc</code> file sitting beside it. Only when a track has neither does
+            Titan Player look anything up.
+          </p>
+
+          <label className="settings-row">
+            <span>
+              <strong>Look up lyrics online</strong>
+              <em>
+                {settings.fetchOnlineLyrics
+                  ? "On — a track with no local lyrics is looked up on LRCLib"
+                  : "Off — lyrics come only from your files"}
+              </em>
+            </span>
+            <button
+              className={`toggle ${settings.fetchOnlineLyrics ? "on" : ""}`}
+              onClick={() => void updateSettings({ fetchOnlineLyrics: !settings.fetchOnlineLyrics })}
+              role="switch"
+              aria-checked={settings.fetchOnlineLyrics}
+            >
+              <i />
+            </button>
+          </label>
+
+          {/*
+            Stated plainly and next to the switch, because this is the one setting
+            in the app that sends anything about the user to another machine. A
+            track you play tells LRCLib its artist, title and album, which over
+            time is a record of what you listen to. The app is complete without
+            it, so nobody should turn it on without being told that.
+          */}
+          {settings.fetchOnlineLyrics && (
+            <p className="settings-note settings-privacy">
+              <Info size={15} />
+              <span>
+                When this is on, playing a track with no lyrics sends its artist, title and
+                album to <strong>lrclib.net</strong>, a free community lyrics database. That
+                is a record of what you listen to. Answers are cached on this machine for a
+                month, and nothing is ever uploaded from your library.
+              </span>
+            </p>
+          )}
+
+          <p className="settings-note">
+            Online lyrics can be the wrong recording — a live take, a cover, or a different
+            master of the same length. Check them against the words. If a track has the wrong
+            ones, load your own <code>.lrc</code> from the now-playing view.
+          </p>
+        </section>
+
+        <section className="settings-card">
           <h2>About</h2>
           <p className="settings-note">
             Titan Player reads tags with <code>music-metadata</code> and serves audio and cover art

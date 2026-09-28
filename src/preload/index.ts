@@ -1,10 +1,32 @@
 import { contextBridge, ipcRenderer } from "electron"
 import type {
   LibrarySettings,
+  Lyrics,
   Playlist,
   ScanProgress,
   ScanResult,
 } from "../shared/types.js"
+
+/**
+ * What an online lookup needs. Metadata rather than a path or a URL, so the main
+ * process never has to trust a location and never reads a file on this account.
+ */
+export interface LyricsLookupTarget {
+  id: string
+  title: string
+  artist: string
+  album: string
+  duration: number
+}
+
+export type LyricsLookupOutcome = "found" | "not-found" | "offline" | "error" | "disabled"
+
+export interface LyricsLookupResult {
+  outcome: LyricsLookupOutcome
+  lyrics: Lyrics | null
+  detail?: string
+  cached?: boolean
+}
 
 /**
  * The only surface the renderer gets. Everything crossing this bridge is a
@@ -72,6 +94,20 @@ const api = {
   // --- lyrics ------------------------------------------------------------
   pickLyricsFile: (): Promise<{ path: string; content: string } | null> =>
     ipcRenderer.invoke("lyrics:pick-file"),
+
+  /**
+   * Look lyrics up online.
+   *
+   * The target is metadata, never a URL: the host is chosen in the main process,
+   * so this is not a way to make the app fetch an arbitrary address. The reply is
+   * already parsed and capped, and `null` for the lyrics means there was no
+   * trustworthy match rather than that something went wrong.
+   */
+  lookupLyrics: (target: LyricsLookupTarget): Promise<LyricsLookupResult> =>
+    ipcRenderer.invoke("lyrics:lookup", target),
+  /** Forget a cached lookup so the next one reaches the network. */
+  forgetLyrics: (target: LyricsLookupTarget): Promise<boolean> =>
+    ipcRenderer.invoke("lyrics:lookup-forgot", target),
 }
 
 export type TitanApi = typeof api

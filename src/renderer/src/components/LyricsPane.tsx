@@ -21,6 +21,15 @@ interface LyricsPaneProps {
   isPlaying: boolean
   onSeek: (seconds: number) => void
   hasAny: boolean
+
+  /**
+   * Progress of the online lookup, so the pane can say something while it waits
+   * instead of showing an empty box that looks like a track with no lyrics at
+   * all. Absent means the feature is off, and the pane says nothing about it.
+   */
+  onlineStatus?: "searching" | "not-found" | "offline"
+  onlineDetail?: string
+  onRetryOnline?: () => void
 }
 
 const AUTO_RESUME_MS = 2600
@@ -67,6 +76,9 @@ export default function LyricsPane({
   isPlaying,
   onSeek,
   hasAny,
+  onlineStatus,
+  onlineDetail,
+  onRetryOnline,
 }: LyricsPaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const lineRefs = useRef<Map<number, HTMLButtonElement>>(new Map())
@@ -286,6 +298,42 @@ export default function LyricsPane({
 
   // --- empty states -----------------------------------------------------
   if (!hasAny) {
+    /*
+     * A track with no lyrics shows one of three different things, because they
+     * call for different actions. Collapsing them into a single "no lyrics"
+     * message made a lookup still in flight look identical to a confirmed miss,
+     * which is the one case where showing nothing actively misleads.
+     */
+    if (onlineStatus === "searching") {
+      return (
+        <div className="lyrics-empty" role="status">
+          <span className="lyrics-lookup-dot" aria-hidden="true" />
+          <p>Looking for lyrics</p>
+          <span>Searching LRCLib by artist and title.</span>
+        </div>
+      )
+    }
+
+    if (onlineStatus === "not-found" || onlineStatus === "offline") {
+      return (
+        <div className="lyrics-empty">
+          <Lyrics size={26} />
+          <p>{onlineStatus === "offline" ? "Could not reach LRCLib" : "No lyrics found online"}</p>
+          <span>
+            {onlineStatus === "offline"
+              ? (onlineDetail ?? "The lookup failed. Local lyrics still work with no connection.")
+              : (onlineDetail ??
+                "Nothing matched this artist and title closely enough to trust.")}
+          </span>
+          {onRetryOnline && onlineStatus === "not-found" && (
+            <button className="lyrics-retry" onClick={onRetryOnline}>
+              Search again
+            </button>
+          )}
+        </div>
+      )
+    }
+
     return (
       <div className="lyrics-empty">
         <Lyrics size={26} />
