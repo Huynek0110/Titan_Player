@@ -287,6 +287,31 @@ short version:
 - foobar2000's OpenLyrics added an explicit "disable automatic scroll" toggle,
   which tells you power users want to break auto-scroll on purpose.
 
+### The line change is a change of appearance, never of position
+
+The outgoing line dissolves in place — a blur and a fade at a fixed position — and
+never travels. Sliding it up and out was tried and reads as a scroll, which is the
+one thing this layout exists not to be. Apple Music's synced lyrics work the same
+way: the current line resolves sharp and bright while the others recede and go
+soft, and nothing moves.
+
+Two consequences that will look like mistakes if undone:
+
+- **`filter: blur()` is allowed here, despite the motion policy.** It is excluded
+  for anything larger than a caption. Two lines of text changing once every few
+  seconds is the case where the depth cue *is* the effect, and blur is what makes
+  the block read as a surface with a depth rather than as three shades of grey.
+- **The lyric slots have natural height.** They were pinned to two lines so the
+  stack could not change height, and a one-line lyric then floated inside a
+  two-line box — the reported "the lines look separated". Top-aligning the stack
+  and letting the slots size to their content fixes it, because the current line is
+  first and its top edge then never moves. Only the dim lines below shift, and
+  only when the current line changes row count.
+
+The current line's size is derived from the measured column width, not fixed: at a
+literal 40px a Vietnamese lyric wraps to two rows in a narrow window, which breaks
+the rhythm worse than a slightly smaller type does.
+
 Rejected: `@applemusic-like-lyrics/react` and `lyric-kit` are both AGPL-3.0 and
 this project is MIT. `lrc-kit` 1.2.1 is a fine MIT alternative to the hand-rolled
 parser if the local one ever proves insufficient.
