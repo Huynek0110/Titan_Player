@@ -617,7 +617,7 @@ body {
    * hue and drops the shout, which is the difference between a backdrop and a
    * second foreground.
    */
-  filter: blur(21px) saturate(0.85) brightness(0.66);
+  filter: blur(21px) saturate(0.85) brightness(0.78);
 }
 
 .ambient-art::after {
@@ -640,19 +640,25 @@ body {
    */
   background: linear-gradient(
     180deg,
-    rgba(6, 6, 10, 0.06) 0%,
-    rgba(6, 6, 10, 0.1) 45%,
-    rgba(4, 4, 7, 0.22) 100%
+    rgba(6, 6, 10, 0.04) 0%,
+    rgba(6, 6, 10, 0.07) 45%,
+    rgba(4, 4, 7, 0.16) 100%
   );
 }
 
 /*
  * The ambient wash that follows the artwork. Fixed, so it never scrolls away.
  *
- * Sits above the cover, and is now a *tint* rather than the backdrop itself: with
- * a photograph underneath, these three stops are what keep the hue consistent
- * across the window instead of leaving whole regions at whatever the cover
- * happened to be doing there.
+ * This is now a *tint* at a fraction of what it was, and that is a correction
+ * rather than a preference. It was designed to *be* the backdrop: three soft
+ * radial stops in the artwork's own colours. Once there is an actual photograph
+ * behind it, those three stops are a third layer of colour between the picture
+ * and the panels, and the only thing they contribute is mud. A backdrop that
+ * carries the hue already does not need to be re-tinted by the hue.
+ *
+ * Kept at a low strength because it still does one useful job: it stops the
+ * corners of the window, where a cover is often empty and therefore flat, from
+ * being noticeably flatter than the middle.
  *
  * Performance note, learned the hard way: this was originally a full-viewport
  * `filter: blur(60px)` layer with a continuously running transform animation.
@@ -674,6 +680,10 @@ body {
     radial-gradient(78% 52% at 16% 0%, var(--amb-1) 0%, transparent 68%),
     radial-gradient(62% 46% at 88% 8%, var(--amb-2) 0%, transparent 66%),
     radial-gradient(72% 52% at 60% 100%, var(--amb-3) 0%, transparent 70%);
+  /* The stops are built at 0.08 to 0.13 alpha by palette.ts. Over a photograph
+     that is a third layer of colour, so the layer as a whole is knocked well
+     back — see the note above. */
+  opacity: 0.45;
 }
 
 /* A soft bloom that sits behind the content, not under a blur. Two large

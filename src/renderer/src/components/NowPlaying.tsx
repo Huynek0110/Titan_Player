@@ -9,6 +9,7 @@ import {
 } from "react"
 import type { usePlayer } from "../lib/usePlayer"
 import { formatDuration, formatBitrate, formatSampleRate, formatFileSize } from "../lib/format"
+import { useGlassSurface } from "../lib/glass"
 import Artwork from "./Artwork"
 import {
   ChevronDown,
@@ -438,6 +439,21 @@ export default function NowPlaying({
   const coverUrl = track.hasArtwork ? window.titan.coverUrl(track.id, true) : null
 
   /*
+   * Liquid Glass on the transport dock.
+   *
+   * It had the `.glass` class, which is a blur and a fill, and no refraction —
+   * `scripts/probe-glass-surfaces.mjs` is what surfaced that, by failing this
+   * surface while the other three passed. A frosted panel and a refracting one
+   * are different materials, and only the second one is the thing being asked for.
+   */
+  const dockRef = useGlassSurface<HTMLDivElement>({
+    displacement: -50,
+    extra: "blur(28px) saturate(1.6)",
+    flat: 0.07,
+    chromatic: false,
+  })
+
+  /*
    * The lyric type size, derived from the column width rather than fixed.
    *
    * Every line is this size — the current one and the two below it — and the
@@ -491,7 +507,7 @@ export default function NowPlaying({
         the top of the window free for the artwork and stops a row of chrome from
         cutting across the cover.
       */}
-      <div className="nowplaying-dock glass">
+      <div className="nowplaying-dock glass" ref={dockRef}>
         <button
           className={`icon-btn ${repeat !== "off" ? "on" : ""}`}
           onClick={cycleRepeat}
