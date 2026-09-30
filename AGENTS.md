@@ -35,11 +35,11 @@ shows the **old** build. The packaged app runs its own `app.asar`; only
 
 | Area | Files |
 | --- | --- |
-| Shared | `types.ts` (+ `DEFAULT_EXTENSIONS`), `lyrics.ts` |
-| Main | `index.ts`, `library.ts`, `protocol.ts`, `store.ts` |
+| Shared | `types.ts` (+ `DEFAULT_EXTENSIONS`), `lyrics.ts` (read **and** write), `listening.ts` |
+| Main | `index.ts`, `library.ts`, `protocol.ts`, `store.ts`, `lyrics-write.ts`, `listening.ts` |
 | Preload | `index.ts` |
-| Renderer lib/state | `lib/format.ts`, `lib/palette.ts`, `lib/usePlayer.ts`, `state/store.tsx`, `styles/global.css` |
-| Renderer components | `Icons`, `TitleBar`, `Sidebar`, `Artwork`, `ContextMenu`, `TrackList`, `LyricsPane`, `PlayerBar`, `NowPlaying`, `CollectionViews` (albums + artists), `PlaylistView`, `QueuePanel`, `Settings`, `Visualiser` |
+| Renderer lib/state | `lib/format.ts`, `lib/palette.ts`, `lib/usePlayer.ts`, `lib/useListeningHistory.ts`, `state/store.tsx`, `styles/global.css` |
+| Renderer components | `Icons`, `TitleBar`, `Sidebar`, `Artwork`, `ContextMenu`, `TrackList`, `LyricsPane`, `LyricsEditor`, `PlayerBar`, `NowPlaying`, `CollectionViews` (albums + artists), `PlaylistView`, `QueuePanel`, `Settings`, `Visualiser` |
 | Renderer root | `App.tsx`, `App.css`, `main.tsx`, `env.d.ts`, `index.html` |
 
 Every component has a colocated `.css` file.
@@ -49,36 +49,115 @@ Every component has a colocated `.css` file.
 1. `scripts/README.md` documents the CDP diagnostics. Use
    `shot-nowplaying-quiet.mjs`, not `shot-nowplaying.mjs`, when sound is not
    wanted — the first pins the volume to zero, the second plays the track.
-2. **The word-level sweep is unverified.** It only renders when the source carries
-   word timings, which locally means Enhanced LRC, and the test library has none —
-   so that branch has never actually executed. It typechecks, which is not the
-   same thing. It needs an `.lrc` with `<mm:ss.xx>` word tags beside one track.
 
 Everything else on the original list is complete: `electron-builder.yml`,
 `build/icon.png` (1024×1024, rendered from `icon.svg` by
-`npm run icon`), `.gitignore`, `README.md`, and three rounds of review
-subagents whose findings have been acted on.
+`npm run icon`), `.gitignore`, `README.md`, three rounds of review subagents
+whose findings have been acted on, and the word-level sweep (see below).
+
+## The lyrics editor and the word sweep
+
+The word sweep used to be a branch that had never executed. It only renders when
+the source carries word timings, which locally means Enhanced LRC, and the test
+library had none — so it typechecked and had never once run. Typechecking is not
+a synonym for working.
+
+It now runs, and two things were built to make that possible.
+
+**`formatLrc` in `src/shared/lyrics.ts`**, the counterpart to `parseLrc`. There
+was a reader and no writer, so there was nowhere for a corrected timing to go.
+`test-lrc-roundtrip.mjs` holds the contract: parse, re-serialise, parse, and
+require the two to agree — including every way a word array is unusable and must
+degrade to a plain line. A line whose words are not contiguous, ordered, and
+covering is saved as line-level rather than as a sweep that jumps ahead of the
+voice, and `wordBodyProblem` says which, so the editor can explain it instead of
+losing karaoke silently.
+
+Timestamps **floor, never round**. The obvious justification is wrong: rounding is
+monotonic and cannot reverse a pair. What rounding does is *collapse* two
+genuinely distinct stamps onto one centisecond — words 4ms apart at 12.998s and
+13.002s both become 13.00, and a zero-length segment is not a sweep.
+`test-lrc-roundtrip.mjs` asserts this against the original values rather than the
+written ones, and the assertion was confirmed to fail when `floor` became `round`.
+
+**`src/main/lyrics-write.ts`**, which writes a `.lrc` sidecar and parses it back,
+returning the parse. So what the editor shows after a save is what the next scan
+will produce, rather than an optimistic in-memory copy that disagrees with the
+disk. The renderer supplies the path, so it goes through `isAllowedAudio` — the
+same jail that serves audio, because writing is the wider privilege.
+
+**A sidecar now wins outright over the embedded tag.** It used to go through
+`preferSynced`, which compares line counts when both sources are synced, so a
+`.lrc` with *fewer* lines lost. That is defensible for two arbitrary candidates
+and indefensible here: deleting lines in the editor and saving was silently
+reverted by the next scan.
+
+Verified by `probe-lyrics-editor.mjs` (edit, tap four words against a moving
+clock, save, read the bytes off disk) and `probe-lyric-karaoke.mjs`, which
+samples `--p` on every word span and asserts the fill advances left to right with
+words partly lit — the shape that distinguishes the word sweep from the
+line-span fallback, which looks correct and needs none of this.
+
+## Listening history
+
+Per track: plays, skips, total ms really heard, and when it was last heard. It is
+the foundation for most-played, rarely-played and "what came on last", and it is
+the one thing here that cannot be rebuilt — the music is on disk, the record of
+having heard it is not.
+
+The rule lives in `src/shared/listening.ts` and is **halfway through or four
+minutes, whichever comes first** — Last.fm's rule, which people already hold
+without knowing it.
+
+The decision is made on **listened milliseconds, not on the playback position**.
+Someone who scrubs to the middle of a track, listens twenty seconds and moves on
+has not listened to it, and a position-based rule counts a full play every time.
+The renderer measures (it has the clock) and the main process decides and
+persists, so there is one implementation of the threshold rather than a boolean
+crossing the boundary with it.
+
+Pruned under the same coverage guard as playlists, for the same reason: keyed by
+track id, so an unreachable `E:` would otherwise erase the record of having heard
+everything on `C:`.
+
+`probe-listening-history.mjs` runs two real sessions and measures a **delta**, so
+it is correct on every run rather than only the first — a listening history is
+cumulative by design, and a probe that needs resetting is a probe that will
+quietly assert nothing the second time.
+
+### Two bugs this work surfaced
+
+- **`TrackList`'s virtualised window clamped `start` to `total`, not
+  `total - 1`.** Switching from a scrolled long list to a short one put `start`
+  one past the last index and `slice(total, total)` came back empty — a blank
+  list under a correct heading, which is the shape of a data bug and was not one.
+  It had never shown up because every previous short list took the compact
+  layout instead.
+- **Row keys that included the row's text lost the caret after one character.**
+  React replaces the node on a key change, so focus goes with it. Keying on the
+  slot costs a momentary swap during a deliberate reorder; the alternative costs
+  the user their typing.
 
 ### Traps found while making it compile
 
-3. **TypeScript 7 removed `baseUrl`.** Both tsconfigs had to drop it and use
+1. **TypeScript 7 removed `baseUrl`.** Both tsconfigs had to drop it and use
    relative paths in `paths` instead (`"./src/shared/*"`). With `baseUrl`
    present, `tsc` fails with TS5102.
-4. **`moduleResolution: "node16"` forces explicit `.js` extensions** on every
+2. **`moduleResolution: "node16"` forces explicit `.js` extensions** on every
    relative ESM import. All main/preload/shared imports are now written that
    way. Do not strip them — that is what keeps `music-metadata` resolving to its
    Node build rather than the browser stub.
 
 ### Two traps that cost real debugging time
 
-5. **`src/renderer/src/env.d.ts` imported the bridge type from `"../preload"`.**
+3. **`src/renderer/src/env.d.ts` imported the bridge type from `"../preload"`.**
    From `src/renderer/src` that resolves to `src/renderer/preload`, which does
    not exist. The import failed silently and `window.titan` was `any` across the
    entire renderer, so every callback crossing the bridge became an implicit
    `any` and no error pointed at the real cause. It is `"../../preload"` now.
    `tsconfig.web.json` also had `src/preload/*.d.ts` in `include` while the file
    is `index.ts`, so it was not in the program at all.
-6. **npm blocks install scripts on this machine.** `electron` and `esbuild`
+4. **npm blocks install scripts on this machine.** `electron` and `esbuild`
    postinstalls do not run by default, which leaves a missing `electron.exe` and
    a missing esbuild binary. Approved once via
    `npm install-scripts approve esbuild electron`. If `npm ci` is ever run
@@ -94,10 +173,13 @@ from the renderer would drag `electron` into the browser bundle.
 | File | What it does |
 | --- | --- |
 | `src/shared/types.ts` | `Track`, `Playlist`, `Lyrics`, `LibrarySettings`, `ScanProgress`, `ScanResult` |
-| `src/shared/lyrics.ts` | LRC parser: line-level **and** word-level ("enhanced" LRC). Handles multi-timestamp lines, 1–3 digit minutes, `[.:]` fractions, `[offset:]`, CRLF, ID tags. Exports `activeLineIndex()` binary search. |
+| `src/shared/lyrics.ts` | LRC **reader and writer**. Parses line-level and word-level ("enhanced") LRC; handles multi-timestamp lines, 1–3 digit minutes, `[.:]` fractions, `[offset:]`, CRLF, ID tags. `formatLrc` serialises back, `splitWords` is what a tap-to-time pass stamps, `wordBodyProblem` explains a degrade. Exports `activeLineIndex()` binary search. |
 | `src/main/store.ts` | Atomic JSON persistence (temp file + rename) in `userData`. Settings, playlists, favourites, hidden tracks. `prunePlaylists()` drops vanished tracks. |
 | `src/main/protocol.ts` | Privileged `media://` scheme. Serves cover art from an in-memory map and audio from `net.fetch(file://)` with a path-traversal jail rooted at the user's music folders. |
-| `src/main/library.ts` | Recursive scan, bounded-concurrency tag parsing, artwork publishing, lyrics extraction, sidecar `.lrc` fallback, typed error classification. |
+| `src/main/library.ts` | Recursive scan, bounded-concurrency tag parsing, artwork publishing, lyrics extraction, sidecar `.lrc` fallback (which now **outranks** the embedded tag), typed error classification. |
+| `src/main/lyrics-write.ts` | Serialises edited lyrics, writes the sidecar atomically, and returns the re-parse. A sidecar, not a tag: `music-metadata` reads tags and cannot write them. |
+| `src/main/listening.ts` | Listening history in its own file, written on every track change and pruned under the same coverage guard as playlists. |
+| `src/shared/listening.ts` | The play threshold and what counts as a play or a skip, decided on **milliseconds really heard** rather than on the playback position. |
 | `src/main/index.ts` | Window (`titleBarStyle: hidden`, no native overlay), all IPC handlers, single-instance lock, `open with` handling, external-link and navigation lockdown. |
 | `src/preload/index.ts` | The entire renderer-facing API. Plain serialisable values only. |
 | `src/renderer/src/state/store.tsx` | Reducer + context: library, queue, playlists, favourites, hidden tracks, sorting, search, view routing. Derives visible/queue/current track. |
@@ -495,10 +577,28 @@ collapsed to 400 or 700.
 
 ## When resuming
 
-1. `npm run typecheck`.
+1. `npm run typecheck`, and the two pure tests, which need no app:
+   `node scripts\test-lrc-roundtrip.mjs` and `node scripts\test-listening-rules.mjs`.
 2. `npm run dev`, then `npm run dist:dir` and launch
    `release/win-unpacked/titan-player.exe` — **not** `npm run build`, which does
    not refresh the packaged `app.asar`.
 3. Verify with `scripts/play-a-track.mjs` over CDP on port 9222, and screenshot
-   with `PrintWindow`.
+   with `PrintWindow`. The lyrics and listening-history probes
+   (`probe-lyrics-editor`, `probe-lyric-karaoke`, `probe-listening-history`) cover
+   the newer surfaces and pin the volume to zero throughout.
 4. `npm run dist`, then commit and push.
+
+## Not done, deliberately
+
+**NetEase as a second lyrics provider.** Its legacy plain endpoints still work for
+*search* — it finds a Vietnamese library perfectly — but `/api/song/lyric` no
+longer returns an `lrc` field at all. Verified against 七里香 by Jay Chou, a song
+that certainly has lyrics: the response carries only `lyricUser`. Lyrics moved to
+the encrypted `weapi`/`eapi`/`linuxapi` endpoints, whose crypto is documented in
+the MIT-licensed open-source clients.
+
+So this would mean implementing a reverse-engineered, unauthenticated path into a
+commercial streaming service. It is implementable in about forty lines, and it is
+exactly the kind of thing that breaks without warning and sits in a grey area. Not
+done without the user deciding it is worth it. LRCLib remains the only provider,
+and it needs no key, which is most of why it was chosen.

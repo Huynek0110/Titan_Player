@@ -37,10 +37,40 @@ and run through `node` rather than as shell scripts.
 | `probe-seek.mjs <port> <seconds>` | Sets `currentTime` and reports `readyState`, `seekable` and the position before and after. This is how the non-seekable `media://` response was found. |
 | `probe-clock.mjs <port>` | Ten plain reads of the media clock. Written because two other probes disagreed about whether the clock was moving, and printing the numbers was faster than reconciling the two. |
 | `probe-lyric-animation.mjs <port> [ms]` | Watches the lyric line change for ~20s and records the outgoing line's computed opacity and transform on every sample. Reports the clock span and the number of distinct lines, so a stopped clock cannot be mistaken for a broken animation. For it to see anything, playback must already be running — see below. |
+| `probe-lyrics-editor.mjs <port> [keep-open]` | Drives the lyrics editor end to end: opens it, adds a line, types into it, taps word timings against a moving clock, saves, and reads the bytes back off disk. **Plays audio, muted at zero volume.** |
+| `probe-lyric-karaoke.mjs <port>` | Whether the word-by-word sweep runs. Samples `--p` on every word span across a second of playback and asserts the fill advances left to right with words partly lit. This branch had never executed before it existed. **Plays audio, muted.** |
+| `probe-listening-history.mjs <port>` | Two real listening sessions on the shortest track in the library — one abandoned at 6s, one played to 31s — asserting +1 play, +1 skip, and a listened total matching both. Measures a delta, so it is correct on every run rather than only the first. **Plays audio, muted.** |
+| `test-lrc-roundtrip.mjs` | Pure, no app needed. Parses LRC, re-serialises it, parses again, and requires the two to agree — including every way a word array is unusable and must degrade to a plain line. Run with `node scripts\test-lrc-roundtrip.mjs`. |
+| `test-listening-rules.mjs` | Pure, no app needed. The play threshold, what counts as a play, that a seek is not listening, and that a session is folded in rather than overwriting. |
+| `make-word-lrc.mjs <trackPath> [--keep]` | Writes a word-timed `.lrc` beside a track, so the karaoke sweep has something to run on. Literal LRC text rather than the app's own serialiser, so a bug in the sweep and a bug in the writer cannot cancel out. |
 | `probe-*.mjs` | Lower-level network, protocol and strategy probes written while the audio path was being diagnosed. Kept because they are the fastest way back into that area. |
 | `make-test-audio.mjs` | Generates a short synthetic FLAC for testing the scanner and the player without using real music. |
 | `inspect-audio.mjs` | Dumps the tags of one file, for checking what the scanner will see. |
 | `render-icon.mjs` | Rasterises `build/icon.svg` to `build/icon.png` using the Chromium already inside Electron. Run via `npm run icon`. |
+
+## Two selector shapes the track list has
+
+`TrackList` renders **two different layouts**. A list of fewer than `SIMPLE_MAX`
+(4) rows comes back as `.simple-row` inside `.tracklist-simple`, with no sortable
+header; anything longer is a virtualised table of `.row` inside `.tracklist-body`.
+
+A probe that queries only `.row` finds nothing on a short list and reports an
+empty view where the feature is working perfectly. `probe-listening-history.mjs`
+queries `.row, .simple-row` for exactly this reason, and it is worth knowing
+before concluding that a view is broken.
+
+## Clicks have to land somewhere visible
+
+`getBoundingClientRect()` cheerfully reports the centre of an element that is
+scrolled out of its own `overflow-y: auto` container. Dispatching a mouse event
+there hits whatever is actually at that viewport coordinate, which is nothing —
+the click silently does nothing and the only symptom is an empty field several
+steps later. Scroll into view first, then check the point is inside `innerWidth`
+and `innerHeight`, then click.
+
+`probe-listening-history.mjs` does this and still had to be taught it the hard
+way; its `clickVisible` helper is the version to copy.
+
 
 ## Starting playback from a probe
 
