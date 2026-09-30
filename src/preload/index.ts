@@ -9,6 +9,7 @@ import type {
   ScanResult,
 } from "../shared/types.js"
 import type { MiniCommand, MiniState, MiniWindowCommand } from "../shared/mini.js"
+import type { ListeningHistory } from "../shared/listening.js"
 
 /**
  * What an online lookup needs. Metadata rather than a path or a URL, so the main
@@ -82,6 +83,29 @@ const api = {
   getHidden: (): Promise<string[]> => ipcRenderer.invoke("hidden:get"),
   setHidden: (trackId: string, hidden: boolean): Promise<string[]> =>
     ipcRenderer.invoke("hidden:set", trackId, hidden),
+
+  // --- listening history --------------------------------------------------
+  /*
+   * The renderer measures, the main process decides.
+   *
+   * `recordListen` sends what happened to a finished session — how much was really
+   * heard and how far playback reached — and the main process applies the
+   * threshold. The alternative, sending "count this as a play", moves the rule to
+   * the renderer and leaves the one policy in the codebase with two possible
+   * implementations of it.
+   *
+   * Both return the whole history rather than one record, so the renderer can
+   * update everything from a single reply with no way to be left holding a stale
+   * count for a row it is about to render.
+   */
+  getListeningHistory: (): Promise<ListeningHistory> => ipcRenderer.invoke("listening:get"),
+
+  recordListen: (
+    trackId: string,
+    outcome: "play" | "skip",
+    listenedMs: number,
+  ): Promise<ListeningHistory> =>
+    ipcRenderer.invoke("listening:record", trackId, outcome, listenedMs, new Date().toISOString()),
 
   // --- window ------------------------------------------------------------
   minimize: (): void => ipcRenderer.send("window:minimize"),

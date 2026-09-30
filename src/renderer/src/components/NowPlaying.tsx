@@ -77,7 +77,7 @@ interface NowPlayingProps {
   onToggleLyricsEditor?: () => void
   lyricsEditing?: boolean
   /** What kind of collection is playing, for the "Playing from" eyebrow. */
-  source?: "library" | "playlist" | "album" | "artist" | "favourites"
+  source?: "library" | "playlist" | "album" | "artist" | "favourites" | "recent"
 }
 
 /** Width of the art column, fixed so the resize maths has one known term. */

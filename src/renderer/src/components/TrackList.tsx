@@ -103,6 +103,7 @@ export default function TrackList({
     queue,
     favourites,
     hidden,
+    history,
     playlists,
     search,
     view,
@@ -155,11 +156,26 @@ export default function TrackList({
   useEffect(() => () => scrollObserverRef.current?.disconnect(), [])
 
   const total = tracks.length
-  // Clamp both ends and order them. A stale `scrollTop` surviving a view switch
-  // (scroll to row 500, then switch to a 3-track list) would otherwise compute
-  // start > end and render a blank list.
-  const start = total === 0 ? 0 : Math.min(Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN), total)
-  const end = Math.min(total, Math.max(start, Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN))
+  /*
+   * Clamp both ends, and order them.
+   *
+   * A stale `scrollTop` surviving a view switch would otherwise compute
+   * `start > end` and render nothing. It was already clamped here for that
+   * reason, but clamped to `total` — and `total` is one past the last index, so a
+   * view with fewer tracks than the scroll position allowed put `start` exactly on
+   * it and `slice(total, total)` came back empty. Switching from a scrolled
+   * All Songs to a one-track view rendered a blank list under a correct heading,
+   * which is the shape of a data bug and was not one.
+   *
+   * So the clamp is to `total - 1`, and `end` is floored at `start + 1`: whenever
+   * there is at least one track there is always a row to draw.
+   */
+  const start =
+    total === 0 ? 0 : Math.min(Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN), total - 1)
+  const end = Math.min(
+    total,
+    Math.max(start + 1, Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN),
+  )
   const slice = tracks.slice(start, end)
   const padTop = start * ROW_H
   const padBottom = Math.max(0, (total - end) * ROW_H)
@@ -195,6 +211,30 @@ export default function TrackList({
     (track: Track) => queue.includes(track.id),
     [queue],
   )
+
+  /*
+   * The play count and its skip count for one row.
+   *
+   * Read out of a prop rather than out of the store inside the row, because a row
+   * that called `useStore()` itself would subscribe to every store change — and
+   * the store re-derives the whole visible list on each `timeupdate`, so that is
+   * a few hundred rows re-rendering four times a second to render a number that
+   * changes once per track.
+   */
+  const listenRecord = useCallback(
+    (trackId: string) => history[trackId],
+    [history],
+  )
+
+  /*
+   * The play count only means something in a browse view.
+   *
+   * On a playlist it is actively misleading: the list is a thing the user made,
+   * and stamping "3×" on its rows puts a fact about their listening history into
+   * the middle of it. And a number that increments while you are looking at the
+   * list is a number you cannot trust to be there when you come back to it.
+   */
+  const showHistory = view !== "playlist"
 
   // --- sorting -----------------------------------------------------------
   const toggleSort = (key: SortKey) => {
@@ -651,9 +691,14 @@ export default function TrackList({
     return (
       <div className="tracklist tracklist-compact">
         <div className="tracklist-simple">
-          {tracks.map((track, index) => (
+          {tracks.map((track, index) => {
+            const record = listenRecord(track.id)
+            const plays = record?.plays ?? 0
+            const skips = record?.skips ?? 0
+            return (
             <div
               key={track.id}
+              data-id={track.id}
               className={[
                 "simple-row",
                 isCurrent(track) ? "current" : "",
@@ -694,6 +739,22 @@ export default function TrackList({
               </div>
 
               <div className="row-text simple-text">
+                {/*
+                  The same play count as the full list, for the same reason: a
+                  count that appears on every track in a long library and then
+                  vanishes as soon as the list shortens is a feature that looks
+                  broken rather than one that is merely laid out differently.
+                */}
+                {showHistory && plays > 0 && (
+                  <span
+                    className="row-plays tabular"
+                    title={`Played ${plays} time${plays === 1 ? "" : "s"} · ${
+                      plays === 1 ? "skipped 0 times" : `skipped ${skips} times`
+                    }`}
+                  >
+                    {plays}×
+                  </span>
+                )}
                 <span className="row-title truncate">{track.title}</span>
                 <span className="row-sub truncate">{track.artist}</span>
               </div>
@@ -718,7 +779,8 @@ export default function TrackList({
                 </button>
               </span>
             </div>
-          ))}
+            )
+          })}
         </div>
 
         <SelectionBar
@@ -784,9 +846,21 @@ export default function TrackList({
           const index = start + i
           const current = isCurrent(track)
           const queued = isQueued(track)
+          const record = listenRecord(track.id)
+          const plays = record?.plays ?? 0
+          const skips = record?.skips ?? 0
           return (
             <div
               key={track.id}
+              /*
+               * The track id in the DOM.
+               *
+               * Probes identify a row by its visible text, which is ambiguous the
+               * moment a library has two tracks with the same title — and the
+               * listening history is keyed by id, so "the row called Intenpol" is
+               * not enough to say which record was written.
+               */
+              data-id={track.id}
               className={[
                 "row",
                 current ? "current" : "",
@@ -841,6 +915,25 @@ export default function TrackList({
                   <span className="row-title truncate">{track.title}</span>
                   {hidden.has(track.id) && (
                     <span className="row-hidden-chip">hidden</span>
+                  )}
+                  {/*
+                    How often this has been played.
+
+                    Only once it has been played, and only in the library view —
+                    the count is a fact about the listener, not about a playlist,
+                    and a number that changes as you listen would be wrong on a
+                    list the user is editing by hand. It is dimmed until hover so
+                    it does not compete with the title for the eye.
+                  */}
+                  {showHistory && plays > 0 && (
+                    <span
+                      className="row-plays tabular"
+                      title={`Played ${plays} time${plays === 1 ? "" : "s"} · ${
+                        plays === 1 ? "skipped 0 times" : `skipped ${skips} times`
+                      }`}
+                    >
+                      {plays}×
+                    </span>
                   )}
                 </div>
                 {track.lyrics.source !== "none" && (

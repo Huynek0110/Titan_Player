@@ -131,6 +131,34 @@
   color: var(--fg-3);
 }
 
+/*
+ * How often a track has been played.
+ *
+ * Not a chip like "hidden": that one is a state the user set and needs to notice,
+ * while this is ambient information that is true of most rows and false of none.
+ * A bordered pill on every played row would turn the library into a wall of
+ * badges, so it is bare text at the lowest contrast in the palette and it comes
+ * up to normal weight on hover — there when you go looking, gone when you do not.
+ *
+ * `min-width` keeps the number from reflowing the title as counts change length
+ * from 1 to 10, which would make the titles in a column visibly jump.
+ */
+.row-plays {
+  flex-shrink: 0;
+  min-width: 2.4ch;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 560;
+  color: var(--fg-4);
+  opacity: 0.75;
+  transition: color var(--fast) var(--ease), opacity var(--fast) var(--ease);
+}
+
+.row:hover .row-plays {
+  color: var(--fg-2);
+  opacity: 1;
+}
+
 /* The playing row is the one place the accent is spent in a list. */
 .row.current {
   background: linear-gradient(

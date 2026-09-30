@@ -183,7 +183,7 @@ export interface LibrarySettings {
   repeat: "off" | "all" | "one"
   shuffle: boolean
   /** Sort order for track lists. */
-  sortBy: "title" | "artist" | "album" | "duration" | "added"
+  sortBy: "title" | "artist" | "album" | "duration" | "added" | "plays" | "lastPlayed"
   sortDir: "asc" | "desc"
   /**
    * Look lyrics up online when a track has none locally.

@@ -8,6 +8,7 @@ import {
   useRef,
   type ReactNode,
 } from "react"
+import { lastPlayedAt, playsOf, type ListeningHistory } from "@shared/listening"
 import type {
   LibrarySettings,
   Playlist,
@@ -17,7 +18,14 @@ import type {
 } from "@shared/types"
 import { compareStrings, foldSearch } from "../lib/format"
 
-export type ViewId = "library" | "albums" | "artists" | "favourites" | "playlist" | "settings"
+export type ViewId =
+  | "library"
+  | "albums"
+  | "artists"
+  | "favourites"
+  | "recent"
+  | "playlist"
+  | "settings"
 
 export interface State {
   ready: boolean
@@ -28,6 +36,8 @@ export interface State {
   favourites: Set<string>
   /** Track ids the user hid from the browse views. */
   hidden: Set<string>
+  /** Per-track listening record: plays, skips, when last heard, and how much. */
+  history: ListeningHistory
   progress: ScanProgress
   failedCount: number
   /** Per-file detail behind `failedCount`, so the cause is actionable. */
@@ -65,6 +75,7 @@ type Action =
       playlists: Playlist[]
       favourites: string[]
       hidden: string[]
+      history: ListeningHistory
     }
   | { type: "scan:progress"; progress: ScanProgress }
   | { type: "scan:done"; tracks: Track[]; failed: ScanFailure[]; ms: number }
@@ -82,6 +93,7 @@ type Action =
   | { type: "playlists:set"; playlists: Playlist[] }
   | { type: "favourites:set"; favourites: string[] }
   | { type: "hidden:set"; hidden: string[] }
+  | { type: "history:set"; history: ListeningHistory }
   | { type: "scan:error-cleared" }
   | { type: "settings:set"; settings: LibrarySettings }
   | { type: "nowPlaying"; open: boolean }
@@ -99,6 +111,7 @@ const initial: State = {
   progress: { phase: "idle", found: 0, parsed: 0, total: 0 },
   failedCount: 0,
   failed: [],
+  history: {},
   scanError: null,
   lastScanMs: 0,
   view: "library",
@@ -133,6 +146,7 @@ function reducer(state: State, action: Action): State {
         playlists: action.playlists,
         favourites: new Set(action.favourites),
         hidden: new Set(action.hidden),
+        history: action.history,
         sortBy: action.settings.sortBy,
         sortDir: action.settings.sortDir,
         view: (action.settings.lastView as ViewId) ?? "library",
@@ -330,6 +344,9 @@ function reducer(state: State, action: Action): State {
     case "hidden:set":
       return { ...state, hidden: new Set(action.hidden) }
 
+    case "history:set":
+      return { ...state, history: action.history }
+
     case "scan:error-cleared":
       return state.scanError === null ? state : { ...state, scanError: null }
 
@@ -378,6 +395,8 @@ export interface Store extends State {
   toggleFavourite: (trackId: string) => Promise<void>
   /** Hide a track from the browse views, or bring it back. */
   setHidden: (trackId: string, hidden: boolean) => Promise<void>
+  /** Fold a finished listening session into the persisted history. */
+  recordListen: (trackId: string, outcome: "play" | "skip", listenedMs: number) => Promise<void>
   addFolder: () => Promise<void>
   removeFolder: (folder: string) => Promise<void>
   /** Tracks for the current view, filtered by search and sorted. */
@@ -391,6 +410,8 @@ export interface Store extends State {
   queueTracks: Track[]
   /** Ids hidden from the browse views. */
   hidden: Set<string>
+  /** Per-track listening record, so a row can render its own play count. */
+  history: ListeningHistory
 }
 
 const StoreContext = createContext<Store | null>(null)
@@ -415,14 +436,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     void (async () => {
       try {
-        const [settings, playlists, favourites, hidden] = await Promise.all([
+        const [settings, playlists, favourites, hidden, history] = await Promise.all([
           window.titan.getSettings(),
           window.titan.getPlaylists(),
           window.titan.getFavourites(),
           window.titan.getHidden(),
+          window.titan.getListeningHistory(),
         ])
         if (cancelled) return
-        dispatch({ type: "ready", settings, playlists, favourites, hidden })
+        dispatch({ type: "ready", settings, playlists, favourites, hidden, history })
         // Pass the freshly fetched settings through, so the first scan does not
         // depend on a re-render having happened yet.
         await scan(settings)
@@ -513,6 +535,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       case "favourites":
         base = state.tracks.filter((t) => state.favourites.has(t.id))
         break
+      case "recent":
+        /*
+         * Everything ever played, most recent first.
+         *
+         * Skipped tracks are included: "recently played" is about what was in the
+         * player's queue, and a skip still tells you what you were in the mood for
+         * half an hour ago. Sorting puts the freshest at the top regardless, and
+         * the sort direction below is forced rather than taken from settings,
+         * because "recent" in ascending order is a list whose most useful member
+         * is off the bottom of the screen.
+         */
+        base = state.tracks
+          .filter((t) => lastPlayedAt(state.history, t.id) > 0)
+          .sort((a, b) => lastPlayedAt(state.history, b.id) - lastPlayedAt(state.history, a.id))
+        break
       case "playlist": {
         const playlist = state.playlists.find((p) => p.id === state.activePlaylistId)
         base = playlist
@@ -582,6 +619,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 return (a.duration - b.duration) * dir
               case "added":
                 return (Date.parse(a.addedAt) - Date.parse(b.addedAt)) * dir
+              /*
+               * The two listening-history orders.
+               *
+               * Both fall back to the title, so tracks with no history land in a
+               * stable place among themselves instead of at an arbitrary offset
+               * from `Array.sort`. Every track has equal history on a first run,
+               * and a comparator that returns 0 for all of them leaves the order
+               * whatever the engine happened to produce — which for a library of
+               * any size is not the order it was displayed in a moment ago.
+               */
+              case "plays":
+                return (
+                  (playsOf(state.history, b.id) - playsOf(state.history, a.id)) * dir ||
+                  compareStrings(a.title, b.title)
+                )
+              case "lastPlayed":
+                return (
+                  (lastPlayedAt(state.history, b.id) - lastPlayedAt(state.history, a.id)) * dir ||
+                  compareStrings(a.title, b.title)
+                )
               default:
                 return (
                   compareStrings(a.title, b.title) * dir ||
@@ -599,6 +656,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       clearScanError: () => dispatch({ type: "scan:error-cleared" }),
       /** Hidden ids, so a row can render its own hidden state. */
       hidden: state.hidden,
+      /** Listening history, so a row can show its own play count. */
+      history: state.history,
       queueTracks: state.queue
         .map((id) => state.byId.get(id))
         .filter((t): t is Track => Boolean(t)),
@@ -681,6 +740,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // currently playing track must not interrupt it.
         const next = await window.titan.setHidden(trackId, hidden)
         dispatch({ type: "hidden:set", hidden: next })
+      },
+      recordListen: async (trackId, outcome, listenedMs) => {
+        /*
+         * The main process returns the whole history rather than the one record it
+         * changed, and that reply is the state. It is what actually got written,
+         * after the increment and any sanitising — so using it means the count on
+         * screen is the count on disk, and a rejected write leaves the row
+         * unchanged rather than showing a play that was never recorded.
+         */
+        const history = await window.titan.recordListen(trackId, outcome, listenedMs)
+        dispatch({ type: "history:set", history })
       },
       addFolder: async () => {
         const picked = await window.titan.pickFolders()

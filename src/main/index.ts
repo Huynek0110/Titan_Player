@@ -11,6 +11,8 @@ import {
   configureAudioExtensions,
 } from "./protocol.js"
 import { lookupLyrics, forgetLyrics, type LookupTarget } from "./lyrics-online.js"
+import { loadHistory, pruneHistory, saveHistory } from "./listening.js"
+import { applyListen } from "../shared/listening.js"
 import {
   LyricsWriteError,
   readLyricsSidecar,
@@ -226,8 +228,14 @@ function runScan(folders?: string[], extensions?: string[]): Promise<ScanResult>
     const missing = [...expected].filter((f) => !reached.has(f))
 
     if (missing.length === 0 && result.tracks.length > 0) {
-      await prunePlaylists(new Set(result.tracks.map((t) => t.id)))
-      pruneCovers(new Set(result.tracks.map((t) => t.id)))
+      const ids = new Set(result.tracks.map((t) => t.id))
+      await prunePlaylists(ids)
+      // Listening history is pruned under exactly the same coverage guard, and
+      // for exactly the same reason: it is keyed by track id, so the same
+      // unreachable drive that would empty every playlist would otherwise erase
+      // the record of having heard everything on the drive that *was* there.
+      await pruneHistory(ids)
+      pruneCovers(ids)
       await resolveFirstSeen(result.tracks)
     } else if (missing.length > 0) {
       // Keep every playlist, favourite and first-seen date intact.
@@ -298,6 +306,41 @@ function registerIpc(): void {
   ipcMain.handle("hidden:get", () => getHidden())
   ipcMain.handle("hidden:set", (_event, trackId: string, hidden: boolean) =>
     setHidden(trackId, hidden),
+  )
+
+  /*
+   * Listening history.
+   *
+   * The renderer sends the *facts* of a finished session and the main process
+   * decides what they mean. That is the split, and it is deliberate: the audio
+   * clock is in the renderer and the file is here, so each half applies its own
+   * rule rather than the threshold crossing the boundary as a boolean and being
+   * applied to something else.
+   *
+   * `record` returns the whole history rather than the one record that changed,
+   * because the renderer has no way to know whether a track it is about to render
+   * has been counted — and returning just its own record would mean a second
+   * round trip to find out.
+   */
+  ipcMain.handle("listening:get", () => loadHistory())
+
+  ipcMain.handle(
+    "listening:record",
+    async (
+      _event,
+      trackId: string,
+      outcome: "play" | "skip" | "ignore",
+      listenedMs: number,
+      at: string,
+    ) => {
+      if (typeof trackId !== "string" || trackId.length === 0) return loadHistory()
+      if (outcome !== "play" && outcome !== "skip") return loadHistory()
+      if (!Number.isFinite(listenedMs) || !Number.isFinite(Date.parse(at))) return loadHistory()
+      // `applyListen` owns the increment, so this cannot double-count and cannot
+      // overwrite a track's existing totals with zeroes.
+      const next = applyListen(await loadHistory(), trackId, outcome, listenedMs, at)
+      return saveHistory(next)
+    },
   )
 
   ipcMain.handle("lyrics:pick-file", async () => {

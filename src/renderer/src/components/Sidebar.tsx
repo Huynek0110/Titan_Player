@@ -14,6 +14,7 @@ import {
   Refresh,
   Settings,
   Trash,
+  Waveform,
 } from "./Icons"
 import ContextMenu, { type MenuAnchor, type MenuItem } from "./ContextMenu"
 import { useGlassSurface } from "../lib/glass"
@@ -26,6 +27,7 @@ const SYSTEM_NAV: Array<{
   playlistId?: string
 }> = [
   { id: "library", label: "All Songs", icon: Library },
+  { id: "recent", label: "Recently Played", icon: Waveform },
   { id: "albums", label: "Albums", icon: Disc },
   { id: "artists", label: "Artists", icon: Artist },
   { id: "favourites", label: "Favourites", icon: Heart, playlistId: "sys:favourites" },

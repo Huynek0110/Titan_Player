@@ -18,6 +18,7 @@ import CollectionViews from "./components/CollectionViews"
 import PlaylistView from "./components/PlaylistView"
 import QueuePanel from "./components/QueuePanel"
 import Settings from "./components/Settings"
+import { useListeningHistory } from "./lib/useListeningHistory"
 import Visualiser from "./components/Visualiser"
 import { Close, Search, Shuffle, Play, Music, Info } from "./components/Icons"
 import "./App.css"
@@ -38,6 +39,26 @@ export default function App() {
   // reads the element directly rather than the `timeupdate`-driven state, which
   // only updates about four times a second.
   const getTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
+  const getDuration = useCallback(
+    () => audioRef.current?.duration ?? currentTrack?.duration ?? 0,
+    [currentTrack?.duration],
+  )
+
+  // --- listening history ---------------------------------------------------
+  /*
+   * Mounted here because this is the one place that has all three: the track that
+   * is current, the clock it is playing on, and the store to report into. It
+   * reports when a track is *done with*, which is why it lives above the player
+   * rather than inside it — the hook has to outlive a track change, or every
+   * session would end at zero seconds listened.
+   */
+  useListeningHistory({
+    trackId: currentTrack?.id ?? null,
+    getTime,
+    getDuration,
+    isPlaying: player.state.isPlaying,
+    onRecord: store.recordListen,
+  })
 
   // --- the floating mini player ------------------------------------------
   /*
@@ -288,6 +309,8 @@ export default function App() {
         return "Artists"
       case "favourites":
         return "Favourites"
+      case "recent":
+        return "Recently Played"
       case "playlist":
         return store.playlists.find((p) => p.id === activePlaylistId)?.name ?? "Playlist"
       case "settings":
@@ -469,7 +492,9 @@ export default function App() {
                   ? "album"
                   : view === "artists"
                     ? "artist"
-                    : "library"
+                    : view === "recent"
+                      ? "recent"
+                      : "library"
           }
         >
           {editingLyrics ? (
