@@ -1,0 +1,442 @@
+/*
+ * The lyrics editor.
+ *
+ * A dense list rather than a display. Everything here is small and fixed-width on
+ * purpose: the point of the screen is comparing one line's time against the
+ * moment in the track, and that comparison is only easy when the times form a
+ * clean column on the left and never shift as the text beside them changes.
+ *
+ * The one place the design departs from the rest of the app is the type scale.
+ * The lyrics pane sets 35px because it is a display surface; this is a form, and
+ * 13px is what makes forty lines legible at once without scrolling between each
+ * pair.
+ */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  gap: var(--sp-4);
+  font-family: var(--font-ui);
+}
+
+/* --- header ------------------------------------------------------------- */
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line-1);
+}
+
+.editor-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.editor-head-text strong {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.editor-head-text span {
+  font-size: 12px;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the list ----------------------------------------------------------- */
+
+.ed-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-right: var(--sp-2);
+}
+
+.ed-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  border-left: 2px solid transparent;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+
+.ed-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/*
+ * The line currently being sung.
+ *
+ * A left border rather than a background wash: a wash on the row would sit under
+ * the text inputs and make the field's own background ambiguous, and the border
+ * is in the same column as the times, so the highlight is next to the number it
+ * belongs to.
+ */
+.ed-row.is-current {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/*
+ * A line with no words in it.
+ *
+ * Marked because an empty row is silently dropped on save, so a user who adds a
+ * line and moves on without filling it in gets no error and no warning — the file
+ * just comes back a line shorter than the list they were looking at. Dashed
+ * rather than coloured: it is a "you have not finished this" state, not an error.
+ */
+.ed-row.has-no-text .ed-stamp {
+  border-style: dashed;
+  border-color: var(--line-2);
+}
+
+.ed-row.has-no-text .ed-text::placeholder {
+  color: var(--fg-4);
+}
+
+.ed-row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* A fixed width, so the times are a column. */
+.ed-stamp {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 26px;
+  padding: 0 var(--sp-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-1);
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  text-align: center;
+}
+
+.ed-stamp:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ed-text {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--sp-3);
+  font-size: 13px;
+  font-family: var(--font-ui);
+  color: var(--fg-0);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+}
+
+.ed-text:hover {
+  border-color: var(--line-1);
+}
+
+.ed-text:focus {
+  outline: none;
+  background: var(--bg-2);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ed-row-btns {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease);
+}
+
+/*
+ * Revealed on hover rather than always on.
+ *
+ * Eight controls on every one of forty rows is 320 targets competing with the
+ * text, and none of them is something a user reaches for without first looking at
+ * the row they mean. Focus-within keeps them reachable from the keyboard, which
+ * is the case a hover rule would otherwise lock out entirely.
+ */
+.ed-row:hover .ed-row-btns,
+.ed-row:focus-within .ed-row-btns {
+  opacity: 1;
+}
+
+.ed-row-btns .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.ed-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding-left: calc(72px + var(--sp-3));
+  font-size: 11px;
+  color: var(--fg-4);
+}
+
+.ed-jump {
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-3);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 2px;
+}
+
+.ed-jump:hover {
+  color: var(--fg-0);
+  text-decoration-color: var(--accent);
+}
+
+.ed-words-ok {
+  color: var(--fg-2);
+}
+
+.ed-words-none {
+  color: var(--fg-4);
+}
+
+/*
+ * A word array that will not be written.
+ *
+ * This is the one state the editor exists to prevent, so it is the one state that
+ * gets colour. `formatLrc` would drop the timing silently at save time and the
+ * line would just stop being karaoke, with nothing on screen to say why.
+ */
+.ed-words-bad {
+  color: #e8a33d;
+}
+
+/* --- the tap session ---------------------------------------------------- */
+
+/*
+ * Takes over the whole list rather than appearing beside it.
+ *
+ * Tapping needs a rhythm, and a rhythm needs one thing to look at. A list of
+ * editable inputs still on screen means a stray click lands in a text field
+ * instead of advancing, and the word being waited for is somewhere in the middle
+ * of it rather than in front of the user.
+ */
+.ed-tap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-5);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  background: rgba(124, 92, 255, 0.06);
+  outline: none;
+}
+
+.ed-tap-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-3);
+}
+
+.ed-tap-hint kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--fg-1);
+}
+
+.ed-tap-count {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 640;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-0);
+  letter-spacing: -0.02em;
+}
+
+.ed-tap-words {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: var(--sp-3);
+}
+
+.ed-tap-word {
+  font-family: var(--font-display);
+  font-size: 17px;
+  line-height: 1.4;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-full, 999px);
+  color: var(--fg-4);
+  background: rgba(255, 255, 255, 0.03);
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+
+/* Already stamped: settled, and clearly behind the eye. */
+.ed-tap-word.is-stamped {
+  color: var(--fg-1);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/*
+ * The word being waited for.
+ *
+ * The only animated thing in the editor, and the only one that is *not*
+ * suppressed under `prefers-reduced-motion` — because it is not decoration. It is
+ * the cursor. A session with no visible cursor is a session where a user cannot
+ * tell whether their keypress registered, and the pulse is removed as a pulse
+ * rather than removed as motion.
+ */
+.ed-tap-word.is-next {
+  color: var(--fg-0);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+  animation: ed-pulse 900ms var(--ease) infinite;
+}
+
+@keyframes ed-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ed-tap-word.is-next {
+    animation: none;
+    /* Still unmistakably the next word without the pulse. */
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+}
+
+.ed-tap-foot {
+  display: flex;
+  gap: var(--sp-3);
+  justify-content: flex-end;
+}
+
+/* --- empty state -------------------------------------------------------- */
+
+.editor-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  text-align: center;
+  color: var(--fg-3);
+  padding: var(--sp-8);
+}
+
+.editor-empty p {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-1);
+}
+
+.editor-empty span {
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 40ch;
+}
+
+.ed-empty-action {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  color: var(--fg-0);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3) var(--sp-5);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+
+.ed-empty-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* --- footer ------------------------------------------------------------- */
+
+.editor-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line-1);
+}
+
+.editor-msg {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-2);
+}
+
+.editor-msg.is-error {
+  color: #e88a7d;
+}
+
+.editor-msg.is-ok {
+  color: var(--fg-1);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+/* Pushes the save group to the right without a second row. */
+.editor-gap {
+  flex: 1;
+  min-width: var(--sp-4);
+}
+
+.editor-actions .np-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}

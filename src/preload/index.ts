@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron"
 import type {
   LibrarySettings,
   Lyrics,
+  LyricsSaveRequest,
+  LyricsWriteResponse,
   Playlist,
   ScanProgress,
   ScanResult,
@@ -109,6 +111,36 @@ const api = {
   /** Forget a cached lookup so the next one reaches the network. */
   forgetLyrics: (target: LyricsLookupTarget): Promise<boolean> =>
     ipcRenderer.invoke("lyrics:lookup-forgot", target),
+
+  /*
+   * The lyrics editor's write path.
+   *
+   * `readLyricsSidecar` takes a path rather than a track id, which is the one
+   * place in this bridge where the renderer names a file. That is unavoidable:
+   * the id is a one-way hash of the path, so the main process cannot go the other
+   * way without keeping a track index it does not have. The main process treats
+   * the path as untrusted for the same reason it treats every other value here —
+   * and the jail it checks against is the same one that serves audio, so a track
+   * the user can play is a track the user can write lyrics beside, and nothing
+   * else.
+   */
+  readLyricsSidecar: (audioPath: string): Promise<string | null> =>
+    ipcRenderer.invoke("lyrics:read-sidecar", audioPath),
+
+  /**
+   * Write the lyric file beside the track.
+   *
+   * Never rejects for an ordinary refusal: a read-only folder, a path outside the
+   * library and a track with no lyric lines all come back as `ok: false` with a
+   * sentence to display. The audio is still playing and the app is still fine in
+   * every one of those cases, so a rejection would be the wrong shape for it.
+   */
+  saveLyrics: (request: LyricsSaveRequest): Promise<LyricsWriteResponse> =>
+    ipcRenderer.invoke("lyrics:save-sidecar", request),
+
+  /** Remove the sidecar so the embedded tag takes over again. */
+  removeLyricsSidecar: (audioPath: string): Promise<LyricsWriteResponse> =>
+    ipcRenderer.invoke("lyrics:remove-sidecar", audioPath),
 
   // --- the floating mini player ------------------------------------------
   /*

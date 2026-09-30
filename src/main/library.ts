@@ -166,9 +166,20 @@ async function parseTrack(audioPath: string): Promise<Track> {
     publishCover(id, { mime: picture.format || "image/jpeg", bytes: picture.data })
   }
 
-  let lyrics = readLyrics(meta)
+  /*
+   * A sidecar, when there is one, wins outright.
+   *
+   * This used to go through `preferSynced`, which compares line counts when both
+   * sources are synced — so a `.lrc` with *fewer* lines than the embedded tag
+   * lost. That is defensible for two arbitrary candidates and indefensible here:
+   * the sidecar is a file the user placed beside the track, or that this app's own
+   * editor just wrote, and it is the more specific of the two. The rule it broke
+   * was that deleting lines in the editor and saving has to survive a rescan —
+   * with the count-based tie-break, a deliberate edit was silently reverted the
+   * next time the library was scanned.
+   */
   const sidecar = await readSidecarLrc(audioPath)
-  if (sidecar) lyrics = preferSynced(lyrics, sidecar)
+  const lyrics = sidecar ?? readLyrics(meta)
 
   const title = firstString(common.title) || titleFromPath(audioPath)
   const artist = firstString(common.artist, common.albumartist) || "Unknown Artist"

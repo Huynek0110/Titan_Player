@@ -184,6 +184,212 @@ export function parseLrc(raw: string): ParsedLyrics {
 }
 
 /**
+ * One run of text with a character range in the line it came from.
+ *
+ * The ranges concatenate back to the line exactly, which is the property the
+ * whole word-timing path depends on: `extractWords` rebuilds offsets by
+ * *searching* for each segment in the parsed text, so a set of segments that
+ * does not reassemble is one it cannot align.
+ */
+export interface WordSegment {
+  text: string
+  start: number
+  end: number
+}
+
+/**
+ * Split a line into the units a word sweep can be timed against.
+ *
+ * Whitespace is carried inside a segment rather than left between them, for the
+ * same reason the renderer puts it inside the span: a gap between two segments
+ * is a region no word owns, so it would never light up. Leading whitespace
+ * belongs to the first segment for the same reason — the contract is that the
+ * segments reassemble the line, and a caller cannot verify that if the leading
+ * spaces quietly go missing.
+ *
+ * A string that is nothing but whitespace comes back as one segment covering
+ * all of it, for the same reason. Callers drop such lines themselves; quietly
+ * returning nothing here would make the reassembly property untestable.
+ */
+export function splitWords(text: string): WordSegment[] {
+  if (text.length === 0) return []
+  if (text.trim().length === 0) return [{ text, start: 0, end: text.length }]
+  const out: WordSegment[] = []
+  const run = /\s*\S+\s*/g
+  let match: RegExpExecArray | null
+  while ((match = run.exec(text)) !== null) {
+    out.push({ text: match[0], start: match.index, end: match.index + match[0].length })
+  }
+  return out
+}
+
+/**
+ * Format seconds as an LRC `mm:ss.xx` timestamp.
+ *
+ * The fraction is **floored, never rounded**, and the reason is worth being
+ * precise about, because the obvious justification is wrong: rounding is
+ * monotonic, so it can never reverse the order of two stamps the way this file
+ * once could.
+ *
+ * What rounding actually does is *collapse* two genuinely distinct timestamps
+ * onto one centisecond. Words 4ms apart at 12.998s and 13.002s round to 13.00
+ * and 13.00, and a zero-length segment is not a sweep: `wordFillFraction` has to
+ * treat a `step` under a millisecond as "finish this word immediately", so the
+ * two words light up together and the line reads as one movement. Floored they
+ * stay 12.99 and 13.00, and the sweep advances.
+ *
+ * The same collapse hits line tags: two lines 4ms apart would come back from
+ * `parseLrc` as two entries with an identical time, and the one after the other
+ * would jump in with no interval to interpolate across.
+ *
+ * Flooring also never writes a time later than the true one, so a saved lyric is
+ * never *ahead* of the singer — the error that is audible, rather than the one
+ * that merely wastes precision.
+ *
+ * Computed from the total in centiseconds rather than from the seconds field
+ * and a separate fraction, so a carry out of the fraction cannot be written as
+ * `.100` — which a parser would read as 0.1s and not as 1.0s.
+ */
+function formatStamp(seconds: number): string {
+  const total = Math.max(0, Number.isFinite(seconds) ? seconds : 0)
+  const centis = Math.floor(total * 100)
+  const minutes = Math.floor(centis / 6000)
+  const secs = Math.floor(centis / 100) % 60
+  const frac = centis % 100
+  return (
+    `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.` +
+    `${String(frac).padStart(2, "0")}`
+  )
+}
+
+export interface LrcMeta {
+  title?: string
+  artist?: string
+  album?: string
+  /** Track length in seconds, written as the conventional `[length:]` tag. */
+  length?: number
+}
+
+/**
+ * Why a line's word timing could not be written.
+ *
+ * Reported rather than swallowed, because every one of these means the line
+ * silently loses its karaoke sweep and the user has no other way to find out. An
+ * editor that showed the same line as the one next to it, and nothing about
+ * why, would be indistinguishable from a bug.
+ */
+export type WordBodyReason =
+  | "no-words"
+  | "single-word"
+  | "gap"
+  | "overlap"
+  | "short-cover"
+  | "backwards"
+
+export type WordBody =
+  | { kind: "words"; body: string }
+  | { kind: "line"; reason: WordBodyReason }
+
+/**
+ * Build the text that follows a line's `[mm:ss.xx]` tag.
+ *
+ * When the line carries word timing, each segment is emitted as
+ * `<mm:ss.xx>text`. Otherwise the plain line is returned, so a line with no
+ * timing at all is a valid line-level lyric rather than an error.
+ *
+ * Every way the word array can be unusable is a *degrade*, not a throw. A
+ * half-timed line saved as a line-level lyric still displays correctly; a
+ * half-timed line saved as word timing displays a sweep that jumps ahead of the
+ * voice, which is worse than no sweep.
+ */
+function wordsToBody(text: string, line: LyricLine): WordBody {
+  const words = line.words
+  if (!words || words.length === 0) return { kind: "line", reason: "no-words" }
+  // A single timed word is not a fill: there is nothing to interpolate across.
+  if (words.length < 2) return { kind: "line", reason: "single-word" }
+
+  const parts: string[] = []
+  let at = 0
+  let previousTime = -Infinity
+  for (const word of words) {
+    if (!Number.isFinite(word.time) || !Number.isInteger(word.start) || !Number.isInteger(word.end)) {
+      return { kind: "line", reason: "gap" }
+    }
+    if (word.time < previousTime) return { kind: "line", reason: "backwards" }
+    previousTime = word.time
+    if (word.start > at) return { kind: "line", reason: "gap" }
+    if (word.start < at) return { kind: "line", reason: "overlap" }
+    if (word.end <= word.start) return { kind: "line", reason: "overlap" }
+    if (word.end > text.length) return { kind: "line", reason: "short-cover" }
+    parts.push(`<${formatStamp(word.time)}>${text.slice(word.start, word.end)}`)
+    at = word.end
+  }
+  if (at < text.length) return { kind: "line", reason: "short-cover" }
+  return { kind: "words", body: parts.join("") }
+}
+
+/** Strip the characters that would break out of an `[id:value]` tag. */
+function idValue(value: string): string {
+  return value.replace(/[\r\n\]]/g, " ").trim()
+}
+
+/**
+ * Serialise lines back to LRC text.
+ *
+ * The counterpart to `parseLrc`, and the round trip is the point: this is what
+ * the editor saves, and `parseLrc` is what reads it back. It has to be exact
+ * rather than close, because the only test available is whether the file that
+ * comes back still shows the same lyric in the same place.
+ *
+ * The text of every line is whitespace-collapsed and trimmed on the way out,
+ * because the parser does the same to the text it reads. A line written with a
+ * double space or a trailing one would come back with different character
+ * offsets than the words recorded against it, and every word after the first
+ * discrepancy would be drawn in the wrong place.
+ *
+ * Lines come out in time order even if they went in unsorted, since that is
+ * what every LRC reader assumes and `parseLrc` would only sort on the way back
+ * in anyway.
+ */
+export function formatLrc(lines: readonly LyricLine[], meta?: LrcMeta): string {
+  const out: string[] = []
+
+  if (meta) {
+    if (meta.title) out.push(`[ti:${idValue(meta.title)}]`)
+    if (meta.artist) out.push(`[ar:${idValue(meta.artist)}]`)
+    if (meta.album) out.push(`[al:${idValue(meta.album)}]`)
+    if (meta.length !== undefined && meta.length > 0) {
+      // `[length:]` is conventionally mm:ss with no fraction.
+      out.push(`[length:${formatStamp(meta.length).slice(0, 5)}]`)
+    }
+    out.push("[by:Titan Player]")
+  }
+
+  const ordered = [...lines].sort((a, b) => a.time - b.time)
+  for (const line of ordered) {
+    const text = line.text.replace(/\s+/g, " ").trim()
+    if (text.length === 0) continue
+    const body = wordsToBody(text, line)
+    out.push(`[${formatStamp(line.time)}]${body.kind === "words" ? body.body : text}`)
+  }
+
+  return out.length === 0 ? "" : `${out.join("\n")}\n`
+}
+
+/**
+ * Why a line's word timing will not be written, or null when it will be.
+ *
+ * The editor asks this before showing a line as karaoke, so the two answers
+ * cannot disagree: both go through `wordsToBody`.
+ */
+export function wordBodyProblem(line: LyricLine): WordBodyReason | null {
+  const text = line.text.replace(/\s+/g, " ").trim()
+  if (text.length === 0) return "no-words"
+  const body = wordsToBody(text, line)
+  return body.kind === "words" ? null : body.reason
+}
+
+/**
  * Pull lyrics out of a tagger's raw tag bag. Tagger libraries disagree about
  * casing and about which key holds synchronised lyrics, so every known spelling
  * is checked and the richest result wins.

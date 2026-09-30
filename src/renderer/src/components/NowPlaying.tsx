@@ -67,6 +67,15 @@ interface NowPlayingProps {
   onToggleQueue?: () => void
   /** Seeked by the inline bar, in seconds from the start of the track. */
   onSeek?: (seconds: number) => void
+  /**
+   * Swap the right-hand column between the lyrics pane and the editor.
+   *
+   * `aria-pressed` rather than `aria-expanded`: the label changes with the state
+   * ("Edit lyrics" / "Done editing"), which is the pressed-button pattern, and
+   * there is no single container here for `aria-expanded` to describe.
+   */
+  onToggleLyricsEditor?: () => void
+  lyricsEditing?: boolean
   /** What kind of collection is playing, for the "Playing from" eyebrow. */
   source?: "library" | "playlist" | "album" | "artist" | "favourites"
 }
@@ -122,6 +131,8 @@ export default function NowPlaying({
   queueOpen = false,
   onToggleQueue,
   onSeek,
+  onToggleLyricsEditor,
+  lyricsEditing = false,
   source,
 }: NowPlayingProps) {
   const { state, toggle, previous, next, seek, toggleShuffle, cycleRepeat, setVolume, toggleMute } =
@@ -710,10 +721,14 @@ export default function NowPlaying({
           */}
           <div className="nowplaying-actions">
             <button
-              className="np-action lead"
-              onClick={onOpenLyricsFile}
-              title="Open an .lrc file to replace these lyrics"
+              className={`np-action lead ${lyricsEditing ? "on" : ""}`}
+              onClick={onToggleLyricsEditor}
+              aria-pressed={lyricsEditing}
+              title="Fix the timing of these lyrics, and add word-by-word timing"
             >
+              {lyricsEditing ? "Done editing" : "Edit lyrics"}
+            </button>
+            <button className="np-action" onClick={onOpenLyricsFile} title="Open an .lrc file to replace these lyrics">
               Load .lrc
             </button>
             <span className="np-action-divider" aria-hidden="true" />

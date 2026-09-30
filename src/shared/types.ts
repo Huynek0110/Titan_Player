@@ -74,6 +74,55 @@ export interface Lyrics {
   source: "embedded" | "lrc-sidecar" | "online" | "none"
 }
 
+/**
+ * The lyrics editor's save request.
+ *
+ * The audio path comes from the renderer, so the main process treats it as
+ * untrusted and puts it through the same jail that serves audio before writing
+ * anything. `meta` is passed rather than looked up because the main process has
+ * no track index — the id it generates is a one-way hash of the path, which is
+ * what keeps the ids stable across a re-scan but also means it cannot be reversed.
+ */
+export interface LyricsSaveRequest {
+  audioPath: string
+  lines: LyricLine[]
+  meta?: {
+    title?: string
+    artist?: string
+    album?: string
+    /** Track length in seconds, written as the `[length:]` tag. */
+    length?: number
+  }
+}
+
+/**
+ * Why a save did not happen, in terms the editor can put in front of the user.
+ *
+ * A failed write is never a crash — the audio is fine and the app is fine — so
+ * it comes back as data with something to say, not as a rejected promise the
+ * renderer would have to guess at.
+ */
+export type LyricsSaveFailure =
+  | "out-of-library"
+  | "nothing-to-save"
+  | "too-large"
+  | "not-writable"
+  | "blocked"
+  | "write-failed"
+  | "delete-failed"
+
+export type LyricsWriteResponse =
+  | {
+      ok: true
+      /** The sidecar that was written. */
+      path: string
+      /** The exact text on disk. */
+      lrc: string
+      /** Those bytes parsed back, so the pane shows what a rescan would. */
+      lyrics: Lyrics
+    }
+  | { ok: false; reason: LyricsSaveFailure; detail: string }
+
 export interface Track {
   /** Stable id derived from the absolute file path. */
   id: string

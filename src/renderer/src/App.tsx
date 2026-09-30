@@ -13,6 +13,7 @@ import TrackList from "./components/TrackList"
 import PlayerBar from "./components/PlayerBar"
 import NowPlaying from "./components/NowPlaying"
 import LyricsPane from "./components/LyricsPane"
+import LyricsEditor from "./components/LyricsEditor"
 import CollectionViews from "./components/CollectionViews"
 import PlaylistView from "./components/PlaylistView"
 import QueuePanel from "./components/QueuePanel"
@@ -123,6 +124,17 @@ export default function App() {
   // so that a track which already had synced lyrics silently ignored the file
   // the user had just picked in order to correct them.
   const [lyricOverride, setLyricOverride] = useState<{ id: string; lyrics: Lyrics } | null>(null)
+
+  /*
+   * Whether the right-hand column is the editor or the pane.
+   *
+   * Keyed by nothing and reset on open: the editor owns a draft of every line,
+   * and leaving it open across a track change would carry one track's timings
+   * into another's save. The `key` on the component below is the real guard —
+   * remounting on the track id means a new track gets a fresh draft before its
+   * first paint rather than a frame later.
+   */
+  const [editingLyrics, setEditingLyrics] = useState(false)
 
   const loadLyricsFile = useCallback(async () => {
     if (!currentTrack) return
@@ -435,7 +447,10 @@ export default function App() {
           player={player}
           isFavourite={store.favourites.has(currentTrack.id)}
           onToggleFavourite={() => void store.toggleFavourite(currentTrack.id)}
-          onClose={() => store.setNowPlaying(false)}
+          onClose={() => {
+            setEditingLyrics(false)
+            store.setNowPlaying(false)
+          }}
           onOpenLyricsFile={() => void loadLyricsFile()}
           onReveal={() => void window.titan.revealInExplorer(currentTrack.path)}
           shuffled={store.shuffled}
@@ -443,6 +458,8 @@ export default function App() {
           queueOpen={store.showQueue}
           onToggleQueue={() => store.setShowQueue(!store.showQueue)}
           onSeek={player.seek}
+          onToggleLyricsEditor={() => setEditingLyrics((v) => !v)}
+          lyricsEditing={editingLyrics}
           source={
             view === "playlist"
               ? "playlist"
@@ -455,25 +472,46 @@ export default function App() {
                     : "library"
           }
         >
-          <LyricsPane
-            lines={lyrics?.lines ?? currentTrack.lyrics.lines}
-            plain={lyrics?.plain ?? currentTrack.lyrics.plain}
-            getTime={getTime}
-            isPlaying={player.state.isPlaying}
-            onSeek={player.seek}
-            hasAny={(lyrics ?? currentTrack.lyrics).source !== "none"}
-            onlineStatus={
-              onlineState.id === currentTrack.id &&
-              onlineState.status !== "idle" &&
-              onlineState.status !== "disabled"
-                ? onlineState.status
-                : undefined
-            }
-            onlineDetail={onlineState.detail}
-            onRetryOnline={() => void retryOnlineLyrics()}
-            onlineEnabled={store.settings?.fetchOnlineLyrics}
-            onEnableOnline={() => void store.updateSettings({ fetchOnlineLyrics: true })}
-          />
+          {editingLyrics ? (
+            <LyricsEditor
+              key={currentTrack.id}
+              audioPath={currentTrack.path}
+              meta={{
+                title: currentTrack.title,
+                artist: currentTrack.artist,
+                album: currentTrack.album,
+                duration: currentTrack.duration,
+              }}
+              lines={lyrics?.lines ?? currentTrack.lyrics.lines}
+              plain={lyrics?.plain ?? currentTrack.lyrics.plain}
+              getTime={getTime}
+              isPlaying={player.state.isPlaying}
+              onTogglePlay={player.toggle}
+              onSeek={player.seek}
+              onAdopt={(saved) => setLyricOverride({ id: currentTrack.id, lyrics: saved })}
+              onClose={() => setEditingLyrics(false)}
+            />
+          ) : (
+            <LyricsPane
+              lines={lyrics?.lines ?? currentTrack.lyrics.lines}
+              plain={lyrics?.plain ?? currentTrack.lyrics.plain}
+              getTime={getTime}
+              isPlaying={player.state.isPlaying}
+              onSeek={player.seek}
+              hasAny={(lyrics ?? currentTrack.lyrics).source !== "none"}
+              onlineStatus={
+                onlineState.id === currentTrack.id &&
+                onlineState.status !== "idle" &&
+                onlineState.status !== "disabled"
+                  ? onlineState.status
+                  : undefined
+              }
+              onlineDetail={onlineState.detail}
+              onRetryOnline={() => void retryOnlineLyrics()}
+              onlineEnabled={store.settings?.fetchOnlineLyrics}
+              onEnableOnline={() => void store.updateSettings({ fetchOnlineLyrics: true })}
+            />
+          )}
         </NowPlaying>
       )}
 

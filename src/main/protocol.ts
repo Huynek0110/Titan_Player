@@ -92,8 +92,13 @@ export function configureAudioExtensions(extensions: readonly string[]): void {
  * nothing while NTFS is case-preserving only. Skipping this makes a folder
  * renamed from `Music` to `music` start failing with a 403, which reads as a
  * playback bug rather than a permissions one.
+ *
+ * Exported because the lyrics writer needs the same guarantee for a different
+ * reason: it turns a path the renderer supplied into a file it writes to. That
+ * is a strictly larger privilege than serving it, so it is gated on the identical
+ * check rather than on a second, subtly different one.
  */
-function isAllowedAudio(target: string): boolean {
+export function isAllowedAudio(target: string): boolean {
   const resolved = path.resolve(target)
   if (!audioExt.has(path.extname(resolved).toLowerCase())) return false
 

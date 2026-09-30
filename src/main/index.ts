@@ -11,6 +11,12 @@ import {
   configureAudioExtensions,
 } from "./protocol.js"
 import { lookupLyrics, forgetLyrics, type LookupTarget } from "./lyrics-online.js"
+import {
+  LyricsWriteError,
+  readLyricsSidecar,
+  removeLyricsSidecar,
+  saveLyricsSidecar,
+} from "./lyrics-write.js"
 import * as mini from "./mini-window.js"
 import type { MiniState } from "../shared/mini.js"
 import {
@@ -29,7 +35,12 @@ import {
   updatePlaylist,
   updateSettings,
 } from "./store.js"
-import type { LibrarySettings, ScanResult } from "../shared/types.js"
+import type {
+  LibrarySettings,
+  LyricsSaveRequest,
+  LyricsWriteResponse,
+  ScanResult,
+} from "../shared/types.js"
 
 const __dirname_ = path.dirname(fileURLToPath(import.meta.url))
 
@@ -331,6 +342,58 @@ function registerIpc(): void {
     await forgetLyrics(target)
     return true
   })
+
+  /*
+   * Reading and writing the sidecar.
+   *
+   * The whole point of the write path is that the file survives, so the response
+   * carries both the exact text and that text parsed back. The editor shows the
+   * parsed form, which means what is on screen after a save is what a rescan
+   * would produce from the same file — rather than the editor's optimistic
+   * in-memory copy, which is the version that disagrees with the disk and then
+   * silently loses on the next scan.
+   *
+   * A failed write comes back as `{ ok: false }` with a sentence to show, not as
+   * a rejection. Nothing is broken when a folder is read-only; the audio keeps
+   * playing and the editor needs to say so.
+   */
+  ipcMain.handle("lyrics:read-sidecar", (_event, audioPath: string) => readLyricsSidecar(audioPath))
+
+  ipcMain.handle(
+    "lyrics:save-sidecar",
+    async (_event, request: LyricsSaveRequest): Promise<LyricsWriteResponse> => {
+      if (!request || !Array.isArray(request.lines)) {
+        return { ok: false, reason: "nothing-to-save", detail: "Nothing was sent to save." }
+      }
+      try {
+        const saved = await saveLyricsSidecar(request.audioPath, request.lines, request.meta)
+        return { ok: true, path: saved.path, lrc: saved.lrc, lyrics: saved.lyrics }
+      } catch (err) {
+        if (err instanceof LyricsWriteError) {
+          return { ok: false, reason: err.reason, detail: err.detail }
+        }
+        const code = (err as NodeJS.ErrnoException | undefined)?.code ?? "unknown"
+        console.error("[titan] lyrics save failed:", err)
+        return { ok: false, reason: "write-failed", detail: `The file could not be written. (${code})` }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    "lyrics:remove-sidecar",
+    async (_event, audioPath: string): Promise<LyricsWriteResponse> => {
+      try {
+        await removeLyricsSidecar(audioPath)
+        return { ok: true, path: "", lrc: "", lyrics: { synced: false, lines: [], source: "none" } }
+      } catch (err) {
+        if (err instanceof LyricsWriteError) {
+          return { ok: false, reason: err.reason, detail: err.detail }
+        }
+        console.error("[titan] lyrics delete failed:", err)
+        return { ok: false, reason: "delete-failed", detail: "The file could not be deleted." }
+      }
+    },
+  )
 
   ipcMain.on("window:minimize", () => mainWindow?.minimize())
   ipcMain.on("window:maximize", () => {
