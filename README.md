@@ -10,6 +10,8 @@ installer.
 
 ![Electron](https://img.shields.io/badge/electron-44-blue) ![React](https://img.shields.io/badge/react-19-61dafb) ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
+![The now-playing view, with the karaoke fill part-way through a line](docs/now-playing.png)
+
 ---
 
 ## What it does
@@ -25,6 +27,8 @@ installer.
 - Search across title, artist, album, genre, year and track number, ignoring
   diacritics, so `muoi` finds `Mười`; sort by any field, ascending or
   descending; play count, duration and album views
+
+![The library, with play counts on rows that have been played](docs/library.png)
 
 **Artwork and colour**
 
@@ -55,7 +59,14 @@ installer.
   title and album of everything you play. Results are cached on your machine for
   a month, matched against the track's duration so a live take or a cover is not
   substituted for the studio version, and never replace lyrics the file already
+- **An editor.** Correct a timing that is off, add lines that are missing, or tap
+  the words along as the track plays to build word-level timing that almost no
+  tagger writes. Saved as an `.lrc` beside the track — the audio file itself is
+  never modified — and the pane then shows exactly what the file contains.
+
   carries. Turn it on in Settings, where the privacy tradeoff is spelled out.
+
+![The lyrics editor: four lines, each with its word timings](docs/lyrics-editor.png)
 
 **Player**
 
@@ -69,9 +80,26 @@ installer.
   window, a vertical volume rail on the left edge, the transport and a seek bar
   inline under the artwork, and the lyrics opposite. The lyrics column is
   resizable by dragging or by arrow keys.
+- A floating mini player — a second frameless window that stays above everything,
+  with the transport, a seek bar and a volume control. It is a *remote control*,
+  not a second player: there is no second copy of the audio, so it cannot drift
+  out of sync with the main window the way two players on one clock always do.
 - Keyboard: `Space` play/pause, `Shift+←/→` seek, `↑/↓` volume, `/` search,
-  `Q` queue, `S` settings, `L` library. `Esc` closes the queue panel and the
-  now-playing view; it does nothing on the library itself.
+  `Q` queue, `S` settings, `L` library, `Ctrl+Shift+M` mini player. `Esc` closes
+  the queue panel and the now-playing view; it does nothing on the library itself.
+
+![The floating mini player](docs/mini-player.png)
+
+**Listening history**
+
+- A play count, a skip count, and the last time each track was heard, kept on your
+  machine only
+- A track counts as played once you reach halfway through it *or* four minutes,
+  whichever comes first
+- Decided on how much you actually listened, not on where playback reached — so
+  skipping ahead and moving on does not count as a play
+- A "Recently Played" view, and sorting by play count or by when you last heard a
+  track
 
 **Playlists**
 
@@ -131,20 +159,23 @@ npm run dist:dir
 
 ```
 src/
-├── shared/          types and the LRC parser, used by both sides
-├── main/            Electron main process
-│   ├── index.ts       window, IPC, navigation lockdown
-│   ├── library.ts     folder walk, tag parsing, lyrics
-│   ├── protocol.ts    the media:// scheme
-│   └── store.ts       atomic JSON persistence
-├── preload/         the single contextBridge surface
-└── renderer/        React UI
-    ├── src/lib/       formatting, colour extraction, audio engine
+├── shared/            types, the LRC reader *and* writer, the play-count rule
+├── main/              Electron main process
+│   ├── index.ts         window, IPC, navigation lockdown
+│   ├── library.ts       folder walk, tag parsing, lyrics
+│   ├── protocol.ts      the media:// scheme
+│   ├── lyrics-write.ts  writes the .lrc sidecar, atomically
+│   ├── listening.ts     the listening-history file
+│   └── store.ts         atomic JSON persistence
+├── preload/           the single contextBridge surface
+└── renderer/          React UI
+    ├── src/lib/       formatting, colour, the audio engine, Liquid Glass
     ├── src/state/     the store
+    ├── src/mini/      the floating bar — a separate document, its own preload surface
     └── src/components/
 ```
 
-### Two decisions worth explaining
+### Three decisions worth explaining
 
 **Cover art and audio are served over a custom `media://` protocol**, not sent
 across the IPC bridge as base64. A 400 KB cover becomes roughly 533 KB of JSON
@@ -163,11 +194,24 @@ Chromium's codec set already, and Electron enables `proprietary_codecs`. The
 tempting alternative, `ffmpeg.wasm`, would add around 65 MB and reimplement in
 WebAssembly something Chromium already does in C++.
 
+**Lyrics are written to a sidecar `.lrc`, never into the audio file.** The tag
+reader available here reads tags and cannot write them, and rewriting a Vorbis
+comment or an ID3v2 frame in place would mean a second tagger and a real risk of
+damaging a file you care about. A sidecar is the same information in a file that
+costs nothing to write and that you can open and correct in any text editor — so
+when something goes wrong with the format, you have a way out that does not
+involve this app.
+
 ### Security posture
 
 - `contextIsolation` on, `nodeIntegration` off
 - The renderer's entire API surface is one `contextBridge` object of plain
   serialisable values — no `fs`, no `Buffer`, no raw `ipcRenderer`
+- The floating mini player is a separate document with its own, much smaller
+  surface. It cannot scan, cannot reach settings, and cannot touch the filesystem,
+  so the narrowest window in the app has the least reach.
+- Writes are gated on the same path jail that serves audio, so the renderer can
+  only write beside a track you can already play
 - A Content-Security-Policy that does not need a `data:` hole, because media
   comes from the custom scheme
 - `will-navigate` and `setWindowOpenHandler` both locked down, so the shell
@@ -182,7 +226,9 @@ WebAssembly something Chromium already does in C++.
   text in a Vorbis comment, which is line-level only. Word timing needs
   "enhanced" LRC, which few taggers write. Where it is present the fill follows
   the words; otherwise the fill is distributed across the line. The line-level
-  path is the guarantee, not a fallback.
+  path is the guarantee, not a fallback. The editor can create the word timings by
+  hand — tapping each word as it is sung — which is a few seconds of work per
+  line and writes an Enhanced LRC beside the track.
 - **A malformed cover-art block can make a FLAC unplayable.** Chromium's FLAC
   demuxer rejects the whole file when a `METADATA_BLOCK_PICTURE` block has a bad
   MIME type, even though the audio is fine. The player surfaces this as an
@@ -194,7 +240,9 @@ WebAssembly something Chromium already does in C++.
 - No loudness normalisation. `REPLAYGAIN` and `R128` tags are neither read nor
   applied, so switching between a quiet folk recording and a loud EDM master at a
   fixed volume is as uneven here as it is in any player without the feature.
-- No scrobbling, no online lyrics lookup, no audio equaliser.
+- No scrobbling and no audio equaliser. Last.fm scrobbling is the obvious
+  omission: it needs an API key from you, and it is the one feature here that
+  sends your listening somewhere.
 - Duplicate files across folders are not detected. Two copies of the same album in
   two folders appear as two albums.
 
