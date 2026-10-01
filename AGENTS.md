@@ -352,6 +352,13 @@ PowerShell on this box blocks `.ps1` shims — use `npm.cmd` / `npx.cmd`.
 - Produce **both** a portable `.exe` and an NSIS installer.
 - Library defaults to `%USERPROFILE%\Music`, is changeable, and supports
   adding several folders that merge into one library.
+- **No `Co-Authored-By:` trailer on any commit in this repository.** Four commits
+  carried `Co-Authored-By: Claude … <noreply@anthropic.com>`, which GitHub counts as
+  a co-author and listed an account called `claude` on the public contributors
+  panel. The history was rewritten to remove it, which changed five commit SHAs and
+  forced the `Installer` tag to move. Commit messages here describe the change and
+  nothing else. If attribution is ever wanted, ask — it is not a default to
+  reintroduce quietly.
 - **Keep AGPL-3.0** rather than going back to MIT, and **no in-app licence
   banner.** The banner was proposed and then declined: AGPL only creates
   obligations when the program is *conveyed* to someone, running it locally
