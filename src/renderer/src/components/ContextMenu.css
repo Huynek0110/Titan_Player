@@ -6,14 +6,21 @@
   padding: 4px;
   border-radius: var(--r-lg);
   /*
-   * The lift, and the rim. A menu on a dark interface with nothing but a shadow
-   * reads as a hole; the hairline is what makes it read as a pane of glass
-   * floating over the row it was opened from.
+   * The lift, and the rim.
+   *
+   * The lift plus `--glass-rim`, and `--glass-rim` rather than a hairline of this
+   * component's own. This rule used to set both, and because it and `.glass` have
+   * the same specificity and component CSS is imported later, it won outright —
+   * so the menu was carrying a 0.08-alpha hairline where every other glass surface
+   * carries the bright 0.5 top edge. That top edge is the single thing that makes
+   * a rectangle read as a pane of glass rather than as a dark hole with a border,
+   * and the menu was the one surface missing it.
+   *
+   * Declared here rather than left to the shared class, because "which of two
+   * equal-specificity rules wins" is a fact about import order and not something
+   * to leave to chance on the surface that most needs to look right.
    */
-  box-shadow:
-    var(--shadow-3),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  box-shadow: var(--shadow-3), var(--glass-rim);
   transform-origin: top left;
   animation: context-in 110ms var(--ease);
 }

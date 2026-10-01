@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
+import { useGlassSurface } from "../lib/glass"
 import "./ContextMenu.css"
 
 export interface MenuItem {
@@ -11,6 +12,19 @@ export interface MenuItem {
   separator?: boolean
   /** Optional trailing hint, e.g. a shortcut. */
   hint?: string
+  /**
+   * Keep the menu open after this item runs, for the rows that open a second
+   * level rather than performing the action.
+   *
+   * This has to be declared rather than inferred. The menu used to close itself
+   * *before* calling `onSelect`, on the assumption that everything a row does
+   * ends the interaction — which is true of every leaf row and false of exactly
+   * the ones that navigate. Those rows all set menu state through a functional
+   * update, so by the time they ran the state was already `null` and the update
+   * returned `null`: the second level never opened, and the row looked dead while
+   * reading as perfectly ordinary code at the call site.
+   */
+  keepOpen?: boolean
   /**
    * Arbitrary content in place of a row, for the one thing a menu cannot do with
    * a label: collect a text value. Excluded from keyboard navigation, because a
@@ -41,6 +55,48 @@ export default function ContextMenu({ anchor, items, onClose }: ContextMenuProps
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<MenuAnchor | null>(null)
   const [activeIndex, setActiveIndex] = useState(-1)
+
+  /*
+   * Liquid Glass, which this surface had the class for but not the refraction.
+   *
+   * A `.glass` class on its own is a fill, a blur and a rim — frosted glass. The
+   * refraction has to be generated for one element at one size and can only
+   * arrive through `useGlassSurface`, which is why the queue drawer once sat on
+   * screen correctly sized with a plain `blur()` and no displacement anywhere in
+   * the code to explain it. Same trap, same fix.
+   *
+   * A menu genuinely has something to refract: it floats over the track list, and
+   * unlike the mini player's panel the backdrop here is not empty.
+   *
+   * The displacement is deliberately weak, for the same reason the sidebar's is.
+   * This is a small, nearly opaque rectangle with content edge to edge, and a
+   * strong rim bend on a shape like that stops reading as glass and starts
+   * reading as a funhouse mirror along all four of its sides.
+   */
+  const glassRef = useGlassSurface<HTMLDivElement>({
+    displacement: 26,
+    extra: "blur(14px) saturate(1.5)",
+    flat: 0.22,
+    chromatic: false,
+  })
+
+  /**
+   * Both refs on one node, as a callback.
+   *
+   * Two separate refs would be simpler to read and would silently break: the
+   * glass hook writes its `backdrop-filter` on the element, and assigning the same
+   * element to a second object ref is fine — but assigning it to two *callback*
+   * refs is not, because React only keeps the last one it was given for that
+   * element and the earlier one never receives its node. The glass would mount
+   * against nothing and the menu would be frosted.
+   */
+  const attach = useCallback(
+    (el: HTMLDivElement | null) => {
+      ref.current = el
+      glassRef(el)
+    },
+    [glassRef],
+  )
 
   // Indices of the selectable rows, so arrow keys skip separators and the rows
   // that are just content.
@@ -163,8 +219,13 @@ export default function ContextMenu({ anchor, items, onClose }: ContextMenuProps
         const item = rows[atIndex]
         if (!item || item.disabled || item.separator || item.node) return
         event.preventDefault()
-        onClose()
+        /*
+         * The action runs first and the menu closes after, so a row that navigates
+         * sees the state it is about to replace rather than a null it cannot
+         * recover from. See `keepOpen`.
+         */
         item.onSelect?.()
+        if (!item.keepOpen) onClose()
       }
     }
 
@@ -200,7 +261,7 @@ export default function ContextMenu({ anchor, items, onClose }: ContextMenuProps
    */
   return createPortal(
     <div
-      ref={ref}
+      ref={attach}
       className="context-menu glass"
       role="menu"
       tabIndex={-1}
@@ -232,8 +293,8 @@ export default function ContextMenu({ anchor, items, onClose }: ContextMenuProps
             disabled={item.disabled}
             onMouseEnter={() => setActiveIndex(index)}
             onClick={() => {
-              onClose()
               item.onSelect?.()
+              if (!item.keepOpen) onClose()
             }}
           >
             {item.icon && <span className="context-icon">{item.icon}</span>}

@@ -431,6 +431,9 @@ export default function TrackList({
       return [
         {
           label: "Back",
+          // Navigates rather than acting, so the menu has to stay mounted to be
+          // navigated back out of.
+          keepOpen: true,
           onSelect: () => setMenu((m) => (m ? { ...m, level: "track" } : m)),
         },
         ...(custom.length
@@ -447,6 +450,7 @@ export default function TrackList({
         {
           label: "New playlist…",
           icon: <Plus size={14} />,
+          keepOpen: true,
           onSelect: () => setMenu((m) => (m ? { ...m, draft: true } : m)),
         },
       ]
@@ -492,6 +496,9 @@ export default function TrackList({
         // back to window.prompt, a Win32 dialog with none of this app's styling.
         label: "Add to playlist",
         icon: <Plus size={14} />,
+        // The whole point of this row is the list it opens, so the menu must
+        // survive being pressed.
+        keepOpen: true,
         onSelect: () => setMenu((m) => (m ? { ...m, level: "playlists" } : m)),
       },
       {
